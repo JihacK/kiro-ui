@@ -3,3 +3,6 @@ Copyright 2025 Guyon IT Consulting
 
 This product includes software developed by Guyon IT Consulting
 (https://github.com/guyon-it-consulting/kiro-ui).
+
+Rust port (kiro-ui-core, kiro-ui-desktop, kiro-ui-server) by JihacK
+(https://github.com/JihacK/kiro-ui), modified from the original work above.

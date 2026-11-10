@@ -2,6 +2,8 @@
 
 A lightweight native chat interface for [Kiro CLI](https://kiro.dev/cli/), connected via the Agent Client Protocol (ACP). Written in Rust with [egui](https://github.com/emilk/egui): one small binary, no webview, no bundled browser or Node runtime.
 
+> Fork of [guyon-it-consulting/kiro-ui](https://github.com/guyon-it-consulting/kiro-ui) by Jerome Guyon (Guyon IT Consulting). This fork ports the server and desktop app to Rust; see [Credits](#credits).
+
 <p align="center">
   <img src="docs/guide/tour.gif" alt="Kiro UI Demo" width="720">
 </p>
@@ -123,6 +125,12 @@ socat TCP-LISTEN:9000,reuseaddr,fork EXEC:"kiro-cli acp"
 # Then: Settings → ACP Transport → TCP → host:9000
 ```
 
+## Credits
+
+Kiro UI was created by **Jerome Guyon / [Guyon IT Consulting](https://github.com/guyon-it-consulting)** at [guyon-it-consulting/kiro-ui](https://github.com/guyon-it-consulting/kiro-ui). The original project designed the interface and its feature set — multi-tab sessions, tool call visualization, permissions and trust rules, rewind, the message queue, follow-up suggestions, goals, the settings page — and built the React frontend that browser mode still uses.
+
+This fork, maintained by [JihacK](https://github.com/JihacK), rewrites the backend and the desktop app in Rust: the ACP bridge (`kiro-ui-core`), the native egui app (`kiro-ui-desktop`), and the browser-mode server (`kiro-ui-server`). Bug reports about the Rust port belong here, not upstream.
+
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). This is a modified version of the original work; the Rust crates, the desktop app and the build setup were changed or added in this fork.
