@@ -1,0 +1,26 @@
+[package]
+name = "kiro-ui-desktop"
+description = "Kiro UI native desktop app (egui) — no webview, no local server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kiro-ui"
+path = "src/main.rs"
+
+[dependencies]
+kiro-ui-core = { path = "../kiro-ui-core" }
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "accesskit", "persistence", "clipboard"] }
+# Bundled monochrome emoji + icon fonts (~0.7 MB) for the UI's symbols.
+egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
+egui_extras = { version = "0.37.0", default-features = false }
+egui_commonmark = { version = "0.26.0", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "time", "fs"] }
+similar = "3.2.1"
+base64 = "0.22"
+# Encodes pasted clipboard images (already in the tree via the clipboard backend).
+png = "0.18"

@@ -1,0 +1,21 @@
+[package]
+name = "kiro-ui-core"
+description = "Kiro UI core: ACP bridge to kiro-cli, tab/session hub, settings, trust, suggestions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "process", "io-util", "sync", "time", "fs"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+getrandom = "0.3"
+hex = "0.4.3"
+regex = "1.13.1"
+dirs = "6"
+aws-config = { version = "1.13.1", features = ["behavior-version-latest"] }
+aws-sdk-bedrockruntime = "1.154.0"
+aws-sdk-bedrock = "1.167.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

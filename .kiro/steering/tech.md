@@ -1,55 +1,50 @@
 # Technology Stack
 
-## Runtime
+Primary goal: **lightweight and low resource usage.** Prefer fewer processes, fewer dependencies, and repainting/working only on events.
 
-- Node.js 20+ with tsx (TypeScript execution without build step)
-- ESM modules (`"type": "module"`)
+## Native desktop app (primary)
 
-## Backend
+- Rust (stable, edition 2021), Cargo workspace
+- egui / eframe 0.37 — immediate-mode native UI, `glow` (OpenGL) renderer, X11 + Wayland, AccessKit
+  - `egui_commonmark` — Markdown rendering (default features off; built-in code highlighting)
+  - `similar` — line diffs for tool-call diff views
+  - Bundled monochrome emoji/icon fonts (`egui/monochrome_emoji_fonts`) — only use glyphs those fonts cover (check with `fc-query` before adding new symbols)
+- tokio — 2 worker threads, runs `kiro-ui-core`
+- No webview, no local HTTP server, no IPC: the UI calls `kiro_ui_core::Client` in-process
+- Native dialogs via OS tools (zenity / osascript / PowerShell) in `kiro_ui_core::picker` — no GTK/toolkit dependency
 
-- TypeScript (`server.ts`) — single file, minimal types, `any` for Kiro extensions
-- Express 4.x — HTTP server + static file serving from `dist/client/`
-- ws — WebSocket server for real-time browser ↔ agent communication
-- @agentclientprotocol/sdk — Official ACP TypeScript SDK
-  - `ClientSideConnection` for managing the ACP connection
-  - `ndJsonStream` for stdio transport
-  - `Client` interface: `requestPermission`, `sessionUpdate`, `extNotification`
-- Child process spawning `kiro-cli acp` per WebSocket connection (one per tab)
-- @aws-sdk/client-bedrock + @aws-sdk/client-bedrock-runtime — Follow-up suggestions via Amazon Bedrock
-- @aws-sdk/credential-providers — AWS credential chain (profiles, env, etc.)
+## Core (`kiro-ui-core`)
 
-## Frontend
+- Hand-rolled ACP client: newline-delimited JSON-RPC 2.0 over stdio (spawned `kiro-cli acp`) or TCP, payloads as `serde_json::Value`
+- `Client::start(state, emit)` / `Client::send(action)` — JSON actions in (`{"action": ...}`), JSON events out (`{"type": ...}`); same protocol the web frontend uses
+- Shared agent process per client by default (`shareAgentProcess` setting); routing by `sessionId`, buffering while sessions open, subagent attribution via `_kiro.dev/subagent/list_update`
+- Amazon Bedrock suggestions via `aws-config` + `aws-sdk-bedrockruntime` / `aws-sdk-bedrock` (clients created lazily)
+- Settings/trust persisted as pretty JSON in `~/.kiro-ui/` (key order preserved)
 
-- React 19 + TypeScript (Vite build)
-- marked.js + DOMPurify — Markdown rendering with XSS sanitization
-- highlight.js (core + 10 languages) — Syntax highlighting for code blocks
-- react-diff-viewer-continued — Side-by-side diff display
-- CSS variables for theming (dark/light), no CSS-in-JS
-- WebSocket for real-time streaming from backend
+## Browser mode (optional, `kiro-ui-server`)
+
+- axum 0.8 (HTTP/1 + WebSocket), rust-embed serves `dist/client`
+- React 19 + TypeScript frontend built with Vite 6 (marked + DOMPurify, highlight.js, react-diff-viewer-continued)
 
 ## Security
 
-- Auth token (crypto.randomBytes) generated per startup, required for all API/WS connections
-- Server binds to 127.0.0.1 only
-- WebSocket origin validation (localhost/127.0.0.1 only)
-- CSP headers (script-src 'self' 'unsafe-inline')
-- Rate limiting (configurable max messages/min, max tabs)
-- Child process memory limits (configurable)
-- Path validation on user inputs (whitelist regex)
+- Desktop: no listening sockets except a per-user Unix socket (`~/.kiro-ui/desktop.sock`) for single-instance focus
+- Browser mode: binds 127.0.0.1 only, auth token per start (constant-time compare), WebSocket origin check, CSP headers
+- Rate limiting and max tabs (configurable), path whitelist for dialog start paths, external URL scheme whitelist (http, https, vscode, cursor, idea)
 
-## Build & Dev
+## Build & test
 
-- Vite 6 — Frontend bundler with React plugin and dev proxy
-- `npm run dev` — Concurrent Vite dev server (5173) + Express (3000), Vite proxies /api to Express
-- `npm run build` — Vite production build to `dist/client/`
-- `npm start` — Build + run Express serving static files
-- Electron — Desktop app via electron-builder (macOS, Windows, Linux)
+- `cargo run -p kiro-ui-desktop` / `cargo build --release -p kiro-ui-desktop` (binary `kiro-ui`)
+- `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`
+- Release profile: `opt-level = "s"`, LTO, 1 codegen unit, stripped
+- Browser mode: `npm start` (Vite build + server), `npm run dev` (Vite :5173 + server :3000)
+- The server crate embeds `dist/client` at compile time: run `npm run build` before building it
 
 ## Protocol
 
-- ACP (Agent Client Protocol) via official SDK
-- Kiro extensions handled via `extNotification` (`_kiro.dev/*` methods)
-- Permission handling uses Promise-based resolvers (SDK calls `requestPermission`, we resolve when user clicks)
+- ACP via the hand-rolled client in `kiro-ui-core/src/rpc.rs`
+- Kiro extensions (`_kiro.dev/*`) translated to UI events in `kiro-ui-core/src/notifications.rs`
+- Permission requests answered from trust rules / tab policy, otherwise forwarded to the UI and resolved by `permission_response`
 
 ## Kiro Extension Methods
 
@@ -76,3 +71,4 @@ All handled:
 - `_kiro.dev/session/list_update` — Dynamic session list changes
 - `_kiro.dev/session/inbox_notification` — Messages from orchestrated sessions
 - `_kiro.dev/session/update` — Extended updates (tool_call_chunk, retry_warning)
+- `_kiro.dev/goal/status` — Goal iteration progress

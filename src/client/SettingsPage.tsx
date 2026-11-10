@@ -20,6 +20,7 @@ export function SettingsPage({ editor, setEditor, onClose, send, kiroSettings, d
   const [acpCommand, setAcpCommand] = useState('kiro-cli acp');
   const [tcpHost, setTcpHost] = useState('localhost');
   const [tcpPort, setTcpPort] = useState('9000');
+  const [shareAgentProcess, setShareAgentProcess] = useState(true);
   const [secLimits, setSecLimits] = useState<Record<string, string>>({});
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
   const [suggestionsRegion, setSuggestionsRegion] = useState('');
@@ -38,6 +39,7 @@ export function SettingsPage({ editor, setEditor, onClose, send, kiroSettings, d
     setAcpCommand(d.acpCommand || 'kiro-cli acp');
     setTcpHost(d.tcpHost || 'localhost');
     setTcpPort(d.tcpPort || '9000');
+    setShareAgentProcess(d.shareAgentProcess !== 'false');
     setSecLimits({ maxTabs: d.maxTabs || '', maxMsgsPerMin: d.maxMsgsPerMin || '', maxChildMemMb: d.maxChildMemMb || '' });
     setSuggestionsEnabled(d.suggestionsEnabled !== 'false');
     setSuggestionsRegion(d.suggestionsRegion || '');
@@ -120,6 +122,10 @@ export function SettingsPage({ editor, setEditor, onClose, send, kiroSettings, d
               <tr><td>Host</td><td><input className="settings-input" style={{width:'200px'}} value={tcpHost} onChange={e => setTcpHost(e.target.value)} placeholder="localhost" /></td></tr>
               <tr><td>Port</td><td><input className="settings-input" style={{width:'80px'}} value={tcpPort} onChange={e => setTcpPort(e.target.value)} placeholder="9000" /></td></tr>
             </>)}
+            <tr>
+              <td>Share agent process</td>
+              <td><label className="settings-toggle"><input type="checkbox" checked={shareAgentProcess} onChange={e => { setShareAgentProcess(e.target.checked); saveSetting('shareAgentProcess', String(e.target.checked)); }} /> {shareAgentProcess ? 'One process for all tabs (less memory)' : 'One process per tab'}</label></td>
+            </tr>
             <tr>
               <td></td>
               <td><button className="settings-save-btn" onClick={(e) => { apiFetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transport, acpCommand, tcpHost, tcpPort }) }).then(() => { (e.target as HTMLButtonElement).textContent = '✓ Saved'; setTimeout(() => { (e.target as HTMLButtonElement).textContent = 'Save transport'; }, 1500); }); }}>Save transport</button></td>

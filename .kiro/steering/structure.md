@@ -2,60 +2,56 @@
 
 ```
 kiro-ui/
-├── .kiro/steering/          # Steering files (product, tech, structure, acp-protocol)
-├── aidlc/                   # Planning & reference docs (backlog, security plan, etc.)
-├── src/client/
-│   ├── index.html           # Vite entry HTML
-│   ├── main.tsx             # React root mount
-│   ├── App.tsx              # Main app component (all UI logic)
-│   ├── apiFetch.ts          # Authenticated fetch wrapper (injects auth token)
-│   ├── useWebSocket.ts      # WebSocket hook with reconnection + token auth
-│   ├── SettingsPage.tsx     # Settings page (general, agent, suggestions, permissions, limits, debug)
-│   ├── ToolBlock.tsx        # Tool call visualization component
-│   ├── ThinkingBlock.tsx    # Thinking/reasoning display
-│   ├── RewindTimeline.tsx   # Visual timeline picker for /rewind
-│   ├── McpPanel.tsx         # MCP server status panel
-│   ├── MessageActions.tsx   # Copy/retry actions on messages
-│   ├── PanelMessage.tsx     # Panel-type command results
-│   ├── components.tsx       # ErrorBoundary
-│   ├── appLogic.ts          # Extracted app logic helpers
-│   ├── wsLogic.ts           # WebSocket message routing helpers
-│   ├── types.ts             # Shared TypeScript types
-│   └── styles.css           # Global styles with CSS variables
-├── src/server/
-│   ├── trust.ts             # Trust rules persistence (load/save/match)
-│   ├── permissions.ts       # Permission resolution logic (policy + trust)
-│   ├── prompt.ts            # Prompt builder (text + images + files)
-│   └── notifications.ts    # Kiro extension notification handler
-├── electron/
-│   └── main.cjs             # Electron main process (window, server lifecycle)
-├── tests/                   # Vitest unit tests (client + server)
-├── dist/client/             # Vite build output (served by Express)
-├── server.ts                # Express + WebSocket + ACP SDK + auth
-├── vite.config.ts           # Vite config with API proxy
-├── tsconfig.json
-└── package.json
+├── .kiro/steering/              # Steering files (product, tech, structure, acp-protocol)
+├── aidlc/                       # Planning & reference docs
+├── Cargo.toml                   # Workspace (core, desktop, server) + release profile
+├── crates/
+│   ├── kiro-ui-core/src/
+│   │   ├── lib.rs               # AppState: settings/trust persistence, workspace, shutdown
+│   │   ├── hub.rs               # Client + Hub: tabs ↔ ACP sessions, shared agent routing, UI actions
+│   │   ├── agent.rs             # Spawn kiro-cli / connect TCP, initialize, terminate
+│   │   ├── rpc.rs               # ndjson JSON-RPC 2.0 connection
+│   │   ├── notifications.rs     # session/update + _kiro.dev/* → UI events
+│   │   ├── permissions.rs       # Trust + policy auto-resolution
+│   │   ├── prompt.rs            # Prompt content blocks (text, images, files)
+│   │   ├── suggestions.rs       # Bedrock follow-up suggestions, model list, test
+│   │   └── picker.rs            # Native dialogs, URL opener, notifications (OS tools)
+│   ├── kiro-ui-desktop/
+│   │   ├── assets/icon-64.rgba  # Window icon (raw RGBA, avoids an image decoder)
+│   │   └── src/
+│   │       ├── main.rs          # PATH fix, single instance, runtime, eframe setup
+│   │       ├── app.rs           # KiroApp: event drain, effects, user actions
+│   │       ├── model.rs         # UI state + event handling (pure, unit-tested)
+│   │       ├── view.rs          # Layout: header, sidebar, tabs, config bar, side panels, toasts, rewind
+│   │       ├── chat.rs          # Messages, tool blocks, diffs, thinking, plan, permissions, panels
+│   │       ├── input.rs         # Prompt box, slash popup, queue, goal, suggestions, context meter
+│   │       ├── settings.rs      # Settings page
+│   │       └── theme.rs         # Palette (dark/light) → egui visuals
+│   └── kiro-ui-server/src/      # Optional browser mode: main.rs (axum), http.rs (routes, WS bridge)
+├── src/client/                  # React web frontend (browser mode only)
+├── packaging/linux/             # .desktop entry
+├── scripts/install-linux.sh     # Build + per-user install
+├── tests/                       # Vitest (web client) + Playwright e2e (browser mode)
+└── package.json                 # npm scripts for both modes
 ```
 
 ## Architecture
 
 ```
-Browser (React + Vite) ←→ WebSocket (token auth) ←→ server.ts ←→ @agentclientprotocol/sdk ←→ kiro-cli acp
+egui window ──in-process──▶ kiro-ui-core::Client ──ACP──▶ kiro-cli acp   (desktop, default)
+browser ──WebSocket──▶ kiro-ui-server ──▶ kiro-ui-core::Client ──ACP──▶ kiro-cli acp
 ```
 
-- `npm run dev` — Runs Vite dev server (port 5173) + Express (port 3000) concurrently. Vite proxies /api to Express. WebSocket connects directly to :3000.
-- `npm start` — Builds frontend then starts Express serving from dist/client at 127.0.0.1:3000.
-- Each WebSocket connection spawns its own `kiro-cli acp` process via the SDK.
-- WebSocket auto-reconnects with exponential backoff (1s → 30s max).
-- Auth token generated at startup, injected into HTML and required for all connections.
+- One `Client`/`Hub` per window (desktop) or per WebSocket (browser mode).
+- Shared mode (default): all tabs of a client are sessions on one `kiro-cli` process. Per-tab mode: one process per tab.
+- The UI ↔ core protocol is JSON actions/events, identical for both frontends.
 
 ## Conventions
 
-- Server: TypeScript (`server.ts`), minimal types, `any` for Kiro extensions
-- Frontend: React + TypeScript, components extracted when >200 lines
-- Styles: CSS variables for theming (`[data-theme="dark"]` / `[data-theme="light"]`), no CSS-in-JS
-- State: React useState/useRef (no external state library)
-- Theme: dark by default, persisted in localStorage
-- Settings: persisted in `~/.kiro-ui/settings.json` (editor, workspace, permPolicy, limits, debug, queue, suggestions)
-- Trust: persisted in `~/.kiro-ui/trust.json`
-- All Kiro interactions go through ACP protocol, never direct file access
+- Rust: keep the core transport-agnostic (no axum/egui types in `kiro-ui-core`); Kiro payloads stay `serde_json::Value`
+- Desktop UI: pure state changes in `model.rs` (return `Effect`s), rendering in the view modules; no per-frame clones of message lists
+- Repaint only on events/input; schedule timed repaints only while something is live (running turn, thinking timer, toasts, debounces)
+- Only use glyphs covered by the bundled egui fonts
+- Theme: dark by default, persisted in eframe storage; settings in `~/.kiro-ui/settings.json`, trust in `~/.kiro-ui/trust.json`
+- All Kiro interactions go through ACP, never direct file access to Kiro's data
+- Web frontend (browser mode): React + TypeScript, CSS variables for theming, no external state library

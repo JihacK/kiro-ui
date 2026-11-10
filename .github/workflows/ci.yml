@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  ci:
+  frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,3 +30,28 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The browser-mode server embeds dist/client at compile time.
+      - run: npm ci && npm run build
+
+      - name: Clippy
+        run: npm run lint:rust
+
+      - name: Tests
+        run: npm run test:rust

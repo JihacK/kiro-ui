@@ -7,7 +7,6 @@ test-results/
 *.log
 .env*
 release/
-server.js
-# Compiled server files for Electron
-src/server/*.js
 .tour-workspace/
+# Rust build output
+target/

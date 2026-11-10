@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kiro UI
+Comment=Desktop chat interface for Kiro CLI
+Exec=kiro-ui
+Icon=kiro-ui
+Terminal=false
+Categories=Development;
+StartupWMClass=dev.kiro.ui
