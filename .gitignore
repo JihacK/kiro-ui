@@ -10,3 +10,5 @@ release/
 .tour-workspace/
 # Rust build output
 target/
+# Local antislop audit reports
+anti-slop/
