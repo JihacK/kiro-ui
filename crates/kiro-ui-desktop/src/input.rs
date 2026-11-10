@@ -25,8 +25,7 @@ impl KiroApp {
         self.flush_command_options(&tab_id);
         self.sync_external_options(&tab_id);
 
-        ui.vertical(|ui| {
-            ui.set_max_width(ui.available_width().min(940.0));
+        crate::view::centered_column(ui, crate::view::CHAT_MAX_WIDTH, |ui| {
             self.subagent_panel(ui);
             self.suggestions_row(ui);
             self.goal_banner(ui);

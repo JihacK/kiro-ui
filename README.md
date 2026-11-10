@@ -45,19 +45,64 @@ With 3 tabs, sharing one agent used 1.0 GB PSS for the agent processes versus 1.
 - **Protocol debug panel** — Raw JSON-RPC traffic
 - **Crash recovery** — Dead agents are restarted automatically
 
-## Quick start
+## Build from source
 
-Requirements: a Rust toolchain (stable) and [Kiro CLI](https://kiro.dev/cli/) installed and logged in (`kiro-cli` in `PATH`).
+### Prerequisites
+
+| Tool | Needed for | Notes |
+|---|---|---|
+| [Rust](https://rustup.rs/) (stable) | Desktop app, browser-mode server | `rustup` installs `cargo` and `rustc` |
+| [Kiro CLI](https://kiro.dev/cli/) | Running the app | `kiro-cli` in `PATH`, logged in (`kiro-cli login`) |
+| Node.js 22 + npm | Browser mode and the full test suite only | Not needed for the desktop app |
+| `zenity` (Linux) | Native file/folder dialogs | macOS uses `osascript`, Windows uses PowerShell |
+
+On Linux no `-dev` packages are needed to compile. At runtime the app needs an X11 or Wayland session with OpenGL (Mesa) and `libxkbcommon`, which desktop distributions ship by default.
 
 ```bash
-cargo run --release -p kiro-ui-desktop
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust
+sudo apt install zenity                                           # Debian/Ubuntu dialogs
 ```
 
-Install for the current user on Linux (binary in `~/.local/bin`, plus desktop entry and icon):
+### Desktop app
 
 ```bash
-sh scripts/install-linux.sh
+git clone https://github.com/JihacK/kiro-ui.git
+cd kiro-ui
+cargo build --release -p kiro-ui-desktop
+./target/release/kiro-ui
 ```
+
+The release build produces a single ~19 MB binary at `target/release/kiro-ui` (`kiro-ui.exe` on Windows). The first build compiles all dependencies and takes a few minutes; later builds are incremental. For a quicker debug build while developing, use `cargo run -p kiro-ui-desktop`.
+
+To install it for the current user on Linux (binary in `~/.local/bin`, desktop entry and icon, no root needed):
+
+```bash
+sh scripts/install-linux.sh            # or: PREFIX=/some/prefix sh scripts/install-linux.sh
+```
+
+Linux is the tested platform. The code has macOS and Windows paths (dialogs, editor links), but those builds are not covered by CI yet.
+
+### Browser-mode server
+
+The server embeds the built web frontend at compile time, so build the frontend first:
+
+```bash
+npm ci
+npm run build                                   # writes dist/client
+cargo build --release -p kiro-ui-server         # target/release/kiro-ui-server
+```
+
+`npm run server:build` runs both steps.
+
+### Tests and lint
+
+```bash
+cargo test --workspace                                   # Rust unit tests
+cargo clippy --workspace --all-targets -- -D warnings    # Rust lint
+npm run ci                                               # everything CI runs (JS + Rust)
+```
+
+Build output goes to `target/`, which grows to several GB with debug builds. `cargo clean --profile dev` removes the debug artifacts and keeps the release binary.
 
 ## Browser mode (optional)
 

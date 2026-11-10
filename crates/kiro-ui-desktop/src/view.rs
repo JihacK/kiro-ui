@@ -7,6 +7,25 @@ use crate::theme;
 use eframe::egui::{self, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke};
 use serde_json::json;
 
+/// Chat and input share one centred column so their edges line up.
+pub const CHAT_MAX_WIDTH: f32 = 860.0;
+pub const CHAT_MARGIN: i8 = 24;
+
+/// Lay out `add` in a column of at most `max_width`, centred in the available width.
+pub fn centered_column<R>(ui: &mut egui::Ui, max_width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let avail = ui.available_width();
+    let width = avail.min(max_width);
+    ui.horizontal(|ui| {
+        ui.add_space(((avail - width) / 2.0).max(0.0));
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            add(ui)
+        })
+        .inner
+    })
+    .inner
+}
+
 pub fn chip(ui: &mut egui::Ui, text: &str, fg: Color32, bg: Color32) {
     egui::Frame::new().fill(bg).corner_radius(CornerRadius::same(5)).inner_margin(Margin::symmetric(7, 2)).show(ui, |ui| {
         ui.label(RichText::new(text).size(11.0).color(fg));
@@ -51,6 +70,15 @@ impl Named for egui::Response {
     }
 }
 
+/// Shorten to at most `max` characters, ending in "…" when cut.
+pub fn ellipsize(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", cut.trim_end())
+}
+
 pub fn status_colors(status: &str, p: &theme::Palette) -> (Color32, Color32) {
     match status {
         "completed" | "complete" | "running" | "connected" | "done" => (p.green, p.green.gamma_multiply(0.15)),
@@ -90,16 +118,7 @@ impl KiroApp {
         if self.show_settings {
             egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::same(20))).show(ui, |ui| self.settings_page(ui));
         } else {
-            egui::Panel::bottom("input")
-                .frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::symmetric(16, 10)))
-                .show(ui, |ui| self.input_area(ui));
-            if self.debug && !self.model.logs.is_empty() {
-                egui::Panel::bottom("debug")
-                    .resizable(true)
-                    .default_size(140.0)
-                    .frame(egui::Frame::new().fill(p.code_bg).inner_margin(Margin::same(8)).stroke(Stroke::new(1.0, p.border)))
-                    .show(ui, |ui| self.debug_panel(ui));
-            }
+            // Side panel first so the input bar only spans the chat area, not underneath the panel.
             let tab = self.model.active_tab();
             let show_side = (!self.model.mcp_servers.is_empty() && tab.modes.is_some()) || !tab.active_files.is_empty();
             if show_side {
@@ -109,7 +128,17 @@ impl KiroApp {
                     .frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::same(10)))
                     .show(ui, |ui| self.side_panels(ui));
             }
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::symmetric(24, 12))).show(ui, |ui| self.chat(ui));
+            egui::Panel::bottom("input")
+                .frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::symmetric(CHAT_MARGIN, 10)))
+                .show(ui, |ui| self.input_area(ui));
+            if self.debug && !self.model.logs.is_empty() {
+                egui::Panel::bottom("debug")
+                    .resizable(true)
+                    .default_size(140.0)
+                    .frame(egui::Frame::new().fill(p.code_bg).inner_margin(Margin::same(8)).stroke(Stroke::new(1.0, p.border)))
+                    .show(ui, |ui| self.debug_panel(ui));
+            }
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(p.bg).inner_margin(Margin::symmetric(CHAT_MARGIN, 12))).show(ui, |ui| self.chat(ui));
         }
 
         if self.show_rewind {
@@ -227,7 +256,7 @@ impl KiroApp {
                         frame.show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("👻").color(ghost.gamma_multiply(alpha)));
-                                let name: String = t.name.chars().take(28).collect();
+                                let name = ellipsize(&t.name, 28);
                                 ui.label(RichText::new(name).color(if active { p.text } else { p.muted }));
                                 if t.running {
                                     ui.label(RichText::new("⟳").color(p.accent_text)).on_hover_text("Running");
@@ -644,6 +673,14 @@ mod tests {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
+
+    #[test]
+    fn long_tab_names_end_with_an_ellipsis() {
+        assert_eq!(ellipsize("Reply with a two-line markdown list", 28), "Reply with a two-line markd…");
+        assert_eq!(ellipsize("Short", 28), "Short");
+        assert_eq!(ellipsize("exactly twenty-eight chars!!", 28), "exactly twenty-eight chars!!");
+        assert_eq!(ellipsize("Use these skills for this re", 10), "Use these…");
+    }
 
     fn accesskit_labels(build: impl FnMut(&mut egui::Ui)) -> Vec<String> {
         let ctx = egui::Context::default();

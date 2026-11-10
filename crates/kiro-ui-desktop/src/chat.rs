@@ -42,7 +42,7 @@ impl KiroApp {
         let has_messages = !tab.messages.is_empty() || tab.thinking.is_some();
 
         egui::ScrollArea::vertical().id_salt(("chat", &tab.id)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
-            ui.set_max_width(ui.available_width().min(920.0));
+          crate::view::centered_column(ui, crate::view::CHAT_MAX_WIDTH, |ui| {
             if loading {
                 ui.add_space(20.0);
                 ui.horizontal(|ui| {
@@ -68,6 +68,7 @@ impl KiroApp {
             }
 
             let last_user = tab.messages.iter().rposition(|m| m.role == Role::User);
+            let last_chat = tab.messages.iter().rposition(|m| m.role.is_user() || matches!(m.role, Role::Assistant | Role::AssistantStream));
             let can_retry = tab.last_stop.as_deref().is_some_and(|s| s != "end_turn");
             let mut i = 0;
             while i < tab.messages.len() {
@@ -97,21 +98,40 @@ impl KiroApp {
                         });
                     }
                     Role::User | Role::UserStream => {
-                        egui::Frame::new().fill(p.surface2).corner_radius(CornerRadius::same(10)).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.add(egui::Label::new(RichText::new(&m.text).color(p.text)).selectable(true).wrap());
+                        let retry = Some(i) == last_user && can_retry;
+                        let (hover_id, show) = actions_visibility(ui, m.uid, tab.running, Some(i) == last_chat || retry);
+                        let block = ui.scope(|ui| {
+                            egui::Frame::new().fill(p.surface2).corner_radius(CornerRadius::same(10)).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.add(egui::Label::new(RichText::new(&m.text).color(p.text)).selectable(true).wrap());
+                            });
+                            if !tab.running {
+                                ui.scope(|ui| {
+                                    if !show {
+                                        ui.set_invisible();
+                                    }
+                                    self.message_actions(ui, &p, m, i, retry, clicks);
+                                });
+                            }
                         });
-                        if !tab.running {
-                            self.message_actions(ui, &p, m, i, Some(i) == last_user && can_retry, clicks);
-                        }
+                        remember_hover(ui, hover_id, &block.response);
                     }
                     Role::Assistant | Role::AssistantStream => {
-                        ui.push_id(m.uid, |ui| {
-                            CommonMarkViewer::new().show(ui, md, &m.text);
+                        let (hover_id, show) = actions_visibility(ui, m.uid, tab.running, Some(i) == last_chat);
+                        let block = ui.scope(|ui| {
+                            ui.push_id(m.uid, |ui| {
+                                CommonMarkViewer::new().show(ui, md, &m.text);
+                            });
+                            if !tab.running {
+                                ui.scope(|ui| {
+                                    if !show {
+                                        ui.set_invisible();
+                                    }
+                                    self.message_actions(ui, &p, m, i, false, clicks);
+                                });
+                            }
                         });
-                        if !tab.running {
-                            self.message_actions(ui, &p, m, i, false, clicks);
-                        }
+                        remember_hover(ui, hover_id, &block.response);
                     }
                 }
                 ui.add_space(8.0);
@@ -202,6 +222,7 @@ impl KiroApp {
                 ui.add_space(6.0);
             }
             ui.add_space(12.0);
+          });
         });
     }
 
@@ -427,6 +448,23 @@ impl KiroApp {
     }
 }
 
+/// Message actions show on the hovered message and always on the last one (keyboard reachable).
+/// Hover is read from the previous frame; the row keeps its space so nothing shifts.
+fn actions_visibility(ui: &egui::Ui, uid: u64, running: bool, is_last: bool) -> (egui::Id, bool) {
+    let id = ui.scope_id().with(("msg-hover", uid));
+    let hovered = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    (id, !running && (is_last || hovered))
+}
+
+fn remember_hover(ui: &egui::Ui, id: egui::Id, block: &egui::Response) {
+    // `rect_contains_pointer` keeps the last position after the pointer leaves the window.
+    let hovered = ui.ctx().input(|i| i.pointer.hover_pos().is_some()) && ui.rect_contains_pointer(block.rect);
+    if ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false) != hovered {
+        ui.ctx().data_mut(|d| d.insert_temp(id, hovered));
+        ui.ctx().request_repaint();
+    }
+}
+
 /// Split "Verb /some/path" (or "Verb dir/file") into the head and the path.
 fn split_path(title: &str) -> Option<(&str, &str)> {
     let (head, last) = title.rsplit_once(' ')?;
@@ -489,4 +527,58 @@ fn diff_view(ui: &mut egui::Ui, p: &Palette, old: &str, new: &str) {
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, Pos2, RawInput};
+
+    /// Two messages (the second is last). Returns each one's "actions visible" flag and the first block's rect.
+    fn frame(ctx: &egui::Context, events: Vec<Event>) -> (Vec<bool>, egui::Rect) {
+        let mut flags = Vec::new();
+        let mut first = egui::Rect::NOTHING;
+        let input = RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            for (uid, is_last) in [(1u64, false), (2u64, true)] {
+                let (id, show) = actions_visibility(ui, uid, false, is_last);
+                let block = ui.scope(|ui| {
+                    ui.label("message");
+                    ui.add_space(30.0);
+                });
+                remember_hover(ui, id, &block.response);
+                if uid == 1 {
+                    first = block.response.rect;
+                }
+                flags.push(show);
+            }
+        });
+        out.textures_delta.clear();
+        (flags, first)
+    }
+
+    #[test]
+    fn actions_show_on_last_message_and_on_hover_only() {
+        let ctx = egui::Context::default();
+        let (flags, first) = frame(&ctx, vec![]);
+        assert_eq!(flags, vec![false, true], "no pointer: only the last message shows actions");
+
+        frame(&ctx, vec![Event::PointerMoved(first.center())]);
+        let (flags, _) = frame(&ctx, vec![]);
+        assert_eq!(flags, vec![true, true], "hovered message shows actions");
+
+        frame(&ctx, vec![Event::PointerGone]);
+        let (flags, _) = frame(&ctx, vec![]);
+        assert_eq!(flags, vec![false, true], "actions hide again when the pointer leaves the window");
+
+        frame(&ctx, vec![Event::PointerMoved(first.center())]);
+        frame(&ctx, vec![Event::PointerMoved(Pos2::new(390.0, 290.0))]);
+        let (flags, _) = frame(&ctx, vec![]);
+        assert_eq!(flags, vec![false, true], "actions hide when the pointer moves elsewhere");
+
+        let ctx = egui::Context::default();
+        let input = RawInput::default();
+        let mut out = ctx.run_ui(input, |ui| assert!(!actions_visibility(ui, 9, true, true).1, "hidden while a turn runs"));
+        out.textures_delta.clear();
+    }
 }
