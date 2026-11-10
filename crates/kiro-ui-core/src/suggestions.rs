@@ -1,4 +1,4 @@
-//! Follow-up suggestions via Amazon Bedrock (`/api/suggestions*`).
+//! Follow-up suggestions via Amazon Bedrock.
 //!
 //! AWS clients are created lazily on first use and cached per (region, profile),
 //! so users who never enable suggestions pay nothing at runtime.

@@ -39,7 +39,6 @@ pub async fn pick_folder(start: &str) -> Option<String> {
     }
 }
 
-/// Pick one or more files to attach.
 pub async fn pick_files(start: &str) -> Vec<String> {
     let Some(start) = start_dir(start) else { return vec![] };
     let out = if cfg!(target_os = "macos") {

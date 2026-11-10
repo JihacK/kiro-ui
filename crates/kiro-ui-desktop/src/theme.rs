@@ -12,7 +12,10 @@ pub struct Palette {
     pub text: Color32,
     pub muted: Color32,
     pub dim: Color32,
+    /// Fills (send button, primary choice). Too dark for small text on dark bg.
     pub accent: Color32,
+    /// Accent for text and icons; ≥4.5:1 on every background.
+    pub accent_text: Color32,
     pub accent_soft: Color32,
     pub green: Color32,
     pub yellow: Color32,
@@ -33,8 +36,9 @@ pub const DARK: Palette = Palette {
     border_hover: hex(0x3d3d3d),
     text: hex(0xf0f0f0),
     muted: hex(0x9a9a9a),
-    dim: hex(0x5a5a5a),
+    dim: hex(0x8a8a8a),
     accent: hex(0x9046ff),
+    accent_text: hex(0xb48cff),
     accent_soft: Color32::from_rgba_premultiplied(17, 8, 31, 31),
     green: hex(0x34d399),
     yellow: hex(0xfbbf24),
@@ -51,12 +55,13 @@ pub const LIGHT: Palette = Palette {
     border_hover: hex(0xd1d1d6),
     text: hex(0x18181b),
     muted: hex(0x71717a),
-    dim: hex(0xa1a1aa),
+    dim: hex(0x6b6b73),
     accent: hex(0x7c3aed),
+    accent_text: hex(0x7c3aed),
     accent_soft: Color32::from_rgba_premultiplied(10, 5, 19, 20),
-    green: hex(0x059669),
-    yellow: hex(0xd97706),
-    red: hex(0xe11d48),
+    green: hex(0x047857),
+    yellow: hex(0x8a5300),
+    red: hex(0xbe123c),
     code_bg: hex(0xfafafa),
     ghosts: [hex(0x7c3aed), hex(0x0891b2), hex(0xea580c), hex(0xdb2777), hex(0x059669), hex(0xe11d48)],
 };
@@ -77,7 +82,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     v.extreme_bg_color = p.surface2;
     v.faint_bg_color = p.surface;
     v.code_bg_color = p.code_bg;
-    v.hyperlink_color = p.accent;
+    v.hyperlink_color = p.accent_text;
     v.warn_fg_color = p.yellow;
     v.error_fg_color = p.red;
     v.override_text_color = Some(p.text);

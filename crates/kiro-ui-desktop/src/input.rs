@@ -3,7 +3,7 @@
 
 use crate::app::{Attachment, KiroApp};
 use crate::model::{CmdOption, GoalStatus};
-use crate::view::chip;
+use crate::view::{chip, clickable, Named};
 use eframe::egui::{self, Color32, CornerRadius, Key, Margin, Modifiers, RichText, Stroke};
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -39,7 +39,6 @@ impl KiroApp {
             let tab_index = self.model.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0);
             let accent = p.ghosts[tab_index % 6];
 
-            // Active skills for this tab
             let skills = self.model.active_tab().skills.clone();
             if !skills.is_empty() {
                 let mut remove = None;
@@ -48,8 +47,8 @@ impl KiroApp {
                     for (i, name) in skills.iter().enumerate() {
                         egui::Frame::new().fill(p.accent_soft).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(name).size(12.0).color(p.accent));
-                                if ui.add(egui::Button::new(RichText::new("×").size(10.0)).frame(false)).on_hover_text("Remove skill").clicked() {
+                                ui.label(RichText::new(name).size(12.0).color(p.accent_text));
+                                if ui.add(egui::Button::new(RichText::new("×").size(10.0)).frame(false)).named(ui, &format!("Remove skill {name}")).clicked() {
                                     remove = Some(i);
                                 }
                             });
@@ -61,7 +60,6 @@ impl KiroApp {
                 }
             }
 
-            // Attachments
             let attachments: Vec<String> = self.ui_for(&tab_id).attachments.iter().map(|a| a.name().to_string()).collect();
             if !attachments.is_empty() {
                 let mut remove = None;
@@ -71,7 +69,7 @@ impl KiroApp {
                             ui.horizontal(|ui| {
                                 let icon = if self.tab_ui[&tab_id].attachments.get(i).is_some_and(|a| matches!(a, Attachment::Image { .. })) { "🖼" } else { "📄" };
                                 ui.label(RichText::new(format!("{icon} {name}")).size(12.0));
-                                if ui.add(egui::Button::new(RichText::new("×").size(10.0)).frame(false)).clicked() {
+                                if ui.add(egui::Button::new(RichText::new("×").size(10.0)).frame(false)).named(ui, &format!("Remove attachment {name}")).clicked() {
                                     remove = Some(i);
                                 }
                             });
@@ -124,18 +122,18 @@ impl KiroApp {
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
                             if running {
-                                if ui.add(egui::Button::new(RichText::new("■").color(p.text)).fill(p.surface2).min_size(egui::vec2(32.0, 30.0))).on_hover_text("Cancel (Esc)").clicked() {
+                                if ui.add(egui::Button::new(RichText::new("■").color(p.text)).fill(p.surface2).min_size(egui::vec2(32.0, 30.0))).named(ui, "Cancel turn (Esc)").clicked() {
                                     self.cancel();
                                 }
                             } else {
                                 let tu = &self.tab_ui[&tab_id];
                                 let can = connected && (!tu.input.trim().is_empty() || !tu.attachments.is_empty());
                                 let btn = egui::Button::new(RichText::new("⬆").strong().color(Color32::WHITE)).fill(if can { p.accent } else { p.accent.gamma_multiply(0.35) }).min_size(egui::vec2(32.0, 30.0));
-                                if ui.add_enabled(can, btn).on_hover_text("Send (Enter)").clicked() {
+                                if ui.add_enabled(can, btn).named(ui, "Send (Enter)").clicked() {
                                     do_send = true;
                                 }
                             }
-                            if ui.add_enabled(!self.dialog_open(), egui::Button::new("📎").frame(false)).on_hover_text("Attach image or file (or drop files on the window)").clicked() {
+                            if ui.add_enabled(!self.dialog_open(), egui::Button::new("📎").frame(false)).named(ui, "Attach image or file (or drop files on the window)").clicked() {
                                 self.attach_files();
                             }
                         });
@@ -280,14 +278,17 @@ impl KiroApp {
             egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
                 for (i, c) in items.iter().enumerate() {
                     let fill = if i == sel { p.accent_soft } else { Color32::TRANSPARENT };
-                    let r = egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(5)).inner_margin(Margin::symmetric(8, 4)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(&c.name).monospace().color(p.accent));
-                            ui.label(RichText::new(&c.description).size(12.0).color(p.muted));
-                        });
-                    });
-                    let r = r.response.interact(egui::Sense::click());
+                    let label = format!("{} {}", c.name, c.description);
+                    let r = clickable(ui, &label, |ui| {
+                        egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(5)).inner_margin(Margin::symmetric(8, 4)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&c.name).monospace().color(p.accent_text));
+                                ui.label(RichText::new(&c.description).size(12.0).color(p.muted));
+                            });
+                        })
+                    })
+                    .response;
                     if i == sel {
                         r.scroll_to_me(None);
                     }
@@ -363,7 +364,7 @@ impl KiroApp {
         let (icon, label, color) = match g.status {
             GoalStatus::Complete => ("✔", "Goal complete".to_string(), p.green),
             GoalStatus::Incomplete => ("⚠", format!("Goal incomplete ({}/{})", g.current, g.max), p.yellow),
-            GoalStatus::Active => ("⟳", format!("Iteration {}/{}", g.current, g.max), p.accent),
+            GoalStatus::Active => ("⟳", format!("Iteration {}/{}", g.current, g.max), p.accent_text),
         };
         let mut cancel = false;
         let mut dismiss = false;
@@ -406,17 +407,17 @@ impl KiroApp {
             for (i, item) in queue.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{}", i + 1)).color(p.dim));
-                    if ui.add_enabled(i > 0, egui::Button::new("⏶").small()).on_hover_text("Move up").clicked() {
+                    if ui.add_enabled(i > 0, egui::Button::new("⏶").small()).named(ui, "Move up").clicked() {
                         op = Some(QueueOp::Up(i));
                     }
-                    if ui.add_enabled(i + 1 < n, egui::Button::new("⏷").small()).on_hover_text("Move down").clicked() {
+                    if ui.add_enabled(i + 1 < n, egui::Button::new("⏷").small()).named(ui, "Move down").clicked() {
                         op = Some(QueueOp::Down(i));
                     }
                     ui.add(egui::TextEdit::singleline(item).desired_width(ui.available_width() - 60.0));
-                    if i + 1 < n && ui.small_button("➕").on_hover_text("Merge with next").clicked() {
+                    if i + 1 < n && ui.small_button("➕").named(ui, "Merge with next").clicked() {
                         op = Some(QueueOp::Merge(i));
                     }
-                    if ui.small_button("×").on_hover_text("Remove").clicked() {
+                    if ui.small_button("×").named(ui, "Remove from queue").clicked() {
                         op = Some(QueueOp::Remove(i));
                     }
                 });

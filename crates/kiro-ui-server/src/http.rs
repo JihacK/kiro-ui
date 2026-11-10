@@ -90,7 +90,7 @@ async fn index(
     let Ok(upgrade) = upgrade else { return asset("index.html") };
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()).unwrap_or("");
     let origin_ok = origin.is_empty() || ORIGIN_RE.is_match(origin);
-    // Query token only, like the original verifyClient.
+    // Token in the query string only; the Authorization header is not accepted here.
     let token_ok = uri
         .query()
         .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("token=")))

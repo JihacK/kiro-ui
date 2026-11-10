@@ -226,7 +226,6 @@ impl Hub {
         self.emit(Value::Object(m));
     }
 
-    // ---------------------------------------------------------------- agents
 
     async fn new_agent(self: &Arc<Self>, shared: bool, owner: Option<&str>) -> Result<Arc<Agent>, RpcError> {
         let agent = agent::spawn(&self.app, self.events.clone(), self.debug.clone(), shared, owner.map(str::to_owned)).await?;
@@ -411,7 +410,6 @@ impl Hub {
         }
     }
 
-    // ---------------------------------------------------------- agent events
 
     fn on_event(self: &Arc<Self>, ev: ConnEvent) {
         match ev {
@@ -551,7 +549,7 @@ impl Hub {
                     Route::Buffer => inner.buffered.entry(agent.id).or_default().push(Incoming::Request { id, method, params }),
                     Route::Tabs(_) | Route::Drop => agent.conn.respond(id, json!({"outcome": {"outcome": "cancelled"}})),
                 },
-                // Advertised capabilities the UI doesn't implement: acknowledge like the original client.
+                // Acknowledge advertised capabilities the UI doesn't implement.
                 "fs/write_text_file" | "terminal/release" | "terminal/kill" => agent.conn.respond(id, json!({})),
                 _ => agent.conn.respond_error(id, -32601, "Method not found", Some(json!({"method": method}))),
             },
@@ -664,7 +662,6 @@ impl Hub {
         });
     }
 
-    // -------------------------------------------------------- client actions
 
     fn on_client_message(self: &Arc<Self>, msg: Value) {
         {

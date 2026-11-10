@@ -2,12 +2,20 @@
 //! settings/trust store directly.
 
 use crate::app::{Bg, KiroApp};
+use crate::view::Named;
 use eframe::egui::{self, CornerRadius, Margin, RichText, Stroke};
 use kiro_ui_core::{suggestions, JsonMap};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 const KIRO_SETTING_DEBOUNCE: Duration = Duration::from_millis(500);
+const SAVED_MARK: Duration = Duration::from_millis(1500);
+
+fn saved_mark(ui: &mut egui::Ui, saved: &[String], key: &str, color: egui::Color32) {
+    if saved.iter().any(|k| k == key) {
+        ui.label(RichText::new("✔ Saved").size(12.0).color(color));
+    }
+}
 
 impl KiroApp {
     pub fn open_settings(&mut self) {
@@ -37,6 +45,7 @@ impl KiroApp {
 
     fn fetch_models(&mut self) {
         self.settings.models_loading = true;
+        self.settings.models_error = None;
         let state = self.state.clone();
         self.spawn_bg(async move {
             let r = suggestions::models(&state).await;
@@ -50,16 +59,27 @@ impl KiroApp {
                     (g("id"), g("name"), g("group"))
                 })
                 .collect();
-            Bg::Models(list)
+            Bg::Models(list, r.get("error").and_then(Value::as_str).map(str::to_owned))
         });
     }
 
-    fn flash(&mut self, what: &'static str) {
-        self.settings.saved_flash = Some((what, Instant::now()));
+    fn flash(&mut self, key: &str) {
+        self.settings.saved_flash.insert(key.to_string(), Instant::now());
     }
 
-    fn flashed(&self, what: &str) -> bool {
-        self.settings.saved_flash.is_some_and(|(w, at)| w == what && at.elapsed() < Duration::from_millis(1500))
+    fn flashed(&self, key: &str) -> bool {
+        self.settings.saved_flash.get(key).is_some_and(|at| at.elapsed() < SAVED_MARK)
+    }
+
+    /// Save one setting and show its "✔ Saved" mark.
+    fn save_flashed(&mut self, key: &str, value: Value) {
+        self.save_setting(key, value);
+        self.flash(key);
+    }
+
+    fn recently_saved(&mut self) -> Vec<String> {
+        self.settings.saved_flash.retain(|_, at| at.elapsed() < SAVED_MARK);
+        self.settings.saved_flash.keys().cloned().collect()
     }
 
     pub fn settings_page(&mut self, ui: &mut egui::Ui) {
@@ -71,7 +91,7 @@ impl KiroApp {
         ui.horizontal(|ui| {
             ui.heading("Settings");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("×").on_hover_text("Close settings").clicked() {
+                if ui.button("×").named(ui, "Close settings").clicked() {
                     self.show_settings = false;
                 }
             });
@@ -90,7 +110,7 @@ impl KiroApp {
                 ui.add_space(12.0);
             };
 
-            // General
+            let saved = self.recently_saved();
             let mut save_ws = false;
             let mut editor_changed = None;
             let editor = self.editor.clone();
@@ -106,12 +126,15 @@ impl KiroApp {
                     ui.label("Editor for file links");
                     let names = [("vscode", "VS Code"), ("cursor", "Cursor"), ("idea", "IntelliJ IDEA"), ("none", "None (plain text)")];
                     let cur = names.iter().find(|(k, _)| *k == editor).map_or("VS Code", |(_, l)| l);
-                    egui::ComboBox::from_id_salt("editor").selected_text(cur).show_ui(ui, |ui| {
-                        for (k, l) in names {
-                            if ui.selectable_label(editor == k, l).clicked() {
-                                editor_changed = Some(k.to_string());
+                    ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_salt("editor").selected_text(cur).show_ui(ui, |ui| {
+                            for (k, l) in names {
+                                if ui.selectable_label(editor == k, l).clicked() {
+                                    editor_changed = Some(k.to_string());
+                                }
                             }
-                        }
+                        });
+                        saved_mark(ui, &saved, "editor", p.green);
                     });
                     ui.end_row();
                 });
@@ -121,11 +144,10 @@ impl KiroApp {
                 self.flash("workspace");
             }
             if let Some(e) = editor_changed {
-                self.save_setting("editor", json!(e));
+                self.save_flashed("editor", json!(e));
                 self.editor = e;
             }
 
-            // Transport
             let mut save_transport = false;
             let mut share_changed = None;
             let tr_flash = self.flashed("transport");
@@ -152,9 +174,12 @@ impl KiroApp {
                     }
                     ui.label("Share agent process");
                     let label = if self.settings.share { "One process for all tabs (less memory)" } else { "One process per tab" };
-                    if ui.checkbox(&mut self.settings.share, label).changed() {
-                        share_changed = Some(self.settings.share);
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut self.settings.share, label).changed() {
+                            share_changed = Some(self.settings.share);
+                        }
+                        saved_mark(ui, &saved, "shareAgentProcess", p.green);
+                    });
                     ui.end_row();
                     ui.label("");
                     save_transport = ui.button(if tr_flash { "✔ Saved" } else { "Save transport" }).clicked();
@@ -174,34 +199,43 @@ impl KiroApp {
                 self.flash("transport");
             }
             if let Some(v) = share_changed {
-                self.save_setting("shareAgentProcess", json!(v.to_string()));
+                self.save_flashed("shareAgentProcess", json!(v.to_string()));
             }
 
-            // Suggestions
             let mut saves: Vec<(&str, Value)> = Vec::new();
             let mut refresh = false;
             let mut test = false;
             let models = self.settings.models.clone();
             let loading = self.settings.models_loading;
+            let models_error = self.settings.models_error.clone();
             let testing = self.settings.testing;
             let test_result = self.settings.test_result.clone();
             section(ui, "Suggestions", "Generate follow-up suggestions via Amazon Bedrock after each turn. Requires AWS credentials.", &mut |ui| {
                 egui::Grid::new("sugg").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
                     ui.label("Enabled");
                     let label = if self.settings.sugg_enabled { "On" } else { "Off" };
-                    if ui.checkbox(&mut self.settings.sugg_enabled, label).changed() {
-                        saves.push(("suggestionsEnabled", json!(self.settings.sugg_enabled.to_string())));
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut self.settings.sugg_enabled, label).changed() {
+                            saves.push(("suggestionsEnabled", json!(self.settings.sugg_enabled.to_string())));
+                        }
+                        saved_mark(ui, &saved, "suggestionsEnabled", p.green);
+                    });
                     ui.end_row();
                     ui.label("AWS Region");
-                    if ui.add(egui::TextEdit::singleline(&mut self.settings.sugg_region).hint_text("us-east-1").desired_width(160.0)).lost_focus() {
-                        saves.push(("suggestionsRegion", json!(self.settings.sugg_region)));
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::TextEdit::singleline(&mut self.settings.sugg_region).hint_text("us-east-1").desired_width(160.0)).lost_focus() {
+                            saves.push(("suggestionsRegion", json!(self.settings.sugg_region)));
+                        }
+                        saved_mark(ui, &saved, "suggestionsRegion", p.green);
+                    });
                     ui.end_row();
                     ui.label("AWS Profile");
-                    if ui.add(egui::TextEdit::singleline(&mut self.settings.sugg_profile).hint_text("default").desired_width(160.0)).lost_focus() {
-                        saves.push(("suggestionsProfile", json!(self.settings.sugg_profile)));
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::TextEdit::singleline(&mut self.settings.sugg_profile).hint_text("default").desired_width(160.0)).lost_focus() {
+                            saves.push(("suggestionsProfile", json!(self.settings.sugg_profile)));
+                        }
+                        saved_mark(ui, &saved, "suggestionsProfile", p.green);
+                    });
                     ui.end_row();
                     ui.label("Model");
                     ui.horizontal(|ui| {
@@ -232,13 +266,22 @@ impl KiroApp {
                         if loading {
                             ui.spinner();
                         }
-                        refresh = ui.button("↻").on_hover_text("Reload models").clicked();
+                        refresh = ui.button("↻").named(ui, "Reload models").clicked();
+                        saved_mark(ui, &saved, "suggestionsModel", p.green);
                     });
                     ui.end_row();
-                    ui.label("Suggestions count");
-                    if ui.add(egui::TextEdit::singleline(&mut self.settings.sugg_count).desired_width(60.0)).lost_focus() {
-                        saves.push(("suggestionsCount", json!(self.settings.sugg_count)));
+                    if let Some(e) = &models_error {
+                        ui.label("");
+                        ui.add(egui::Label::new(RichText::new(format!("Could not load models: {e}")).size(12.0).color(p.red)).wrap());
+                        ui.end_row();
                     }
+                    ui.label("Suggestions count");
+                    ui.horizontal(|ui| {
+                        if ui.add(egui::TextEdit::singleline(&mut self.settings.sugg_count).desired_width(60.0)).lost_focus() {
+                            saves.push(("suggestionsCount", json!(self.settings.sugg_count)));
+                        }
+                        saved_mark(ui, &saved, "suggestionsCount", p.green);
+                    });
                     ui.end_row();
                     ui.label("Test connection");
                     ui.horizontal(|ui| {
@@ -260,7 +303,7 @@ impl KiroApp {
                 });
             });
             for (k, v) in saves {
-                self.save_setting(k, v);
+                self.save_flashed(k, v);
             }
             if refresh {
                 // Region/profile edits must land before listing models.
@@ -270,6 +313,7 @@ impl KiroApp {
                 patch.insert("suggestionsProfile".into(), json!(st.sugg_profile));
                 let state = self.state.clone();
                 self.settings.models_loading = true;
+                self.settings.models_error = None;
                 self.spawn_bg(async move {
                     state.merge_settings(patch).await;
                     let r = suggestions::models(&state).await;
@@ -283,7 +327,7 @@ impl KiroApp {
                             (g("id"), g("name"), g("group"))
                         })
                         .collect();
-                    Bg::Models(list)
+                    Bg::Models(list, r.get("error").and_then(Value::as_str).map(str::to_owned))
                 });
             }
             if test {
@@ -298,7 +342,6 @@ impl KiroApp {
                 });
             }
 
-            // Trust rules
             let mut remove = None;
             let trust = self.settings.trust.clone();
             section(ui, "Trust Rules", "Persistent trust rules for tool calls. Tools marked \"Always allow\" or \"Always reject\" auto-apply without prompting.", &mut |ui| {
@@ -311,7 +354,7 @@ impl KiroApp {
                         ui.label(tool);
                         let color = if policy.starts_with("allow") { p.green } else { p.red };
                         ui.label(RichText::new(policy.replace('_', " ")).color(color).size(12.0));
-                        if ui.small_button("×").on_hover_text("Remove rule").clicked() {
+                        if ui.small_button("×").named(ui, &format!("Remove rule {tool}")).clicked() {
                             remove = Some(tool.clone());
                         }
                         ui.end_row();
@@ -327,7 +370,6 @@ impl KiroApp {
                 });
             }
 
-            // Kiro agent settings
             if let Some(ks) = self.model.kiro_settings.clone().filter(|m| !m.is_empty()) {
                 let mut changed: Vec<(String, String)> = Vec::new();
                 section(ui, "Kiro Agent Settings", "Settings from the Kiro CLI agent. Changes are applied immediately.", &mut |ui| {
@@ -364,32 +406,42 @@ impl KiroApp {
                 }
             }
 
-            // Limits
             let mut limit_saves: Vec<(&str, String)> = Vec::new();
-            section(ui, "Limits", "Resource limits for local Kiro agent processes. Changes apply after restart.", &mut |ui| {
+            section(ui, "Limits", "Max sessions and prompts per minute apply right away; the memory limit applies to newly started agents.", &mut |ui| {
                 egui::Grid::new("limits").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-                    for (label, key, field) in [
-                        ("Max concurrent sessions", "maxTabs", &mut self.settings.max_tabs),
-                        ("Agent memory limit (MB)", "maxChildMemMb", &mut self.settings.max_mem),
-                        ("Max prompts per minute", "maxMsgsPerMin", &mut self.settings.max_msgs),
+                    for (label, key, field, note) in [
+                        ("Max concurrent sessions", "maxTabs", &mut self.settings.max_tabs, ""),
+                        ("Agent memory limit (MB)", "maxChildMemMb", &mut self.settings.max_mem, "Node-based ACP agents only; kiro-cli ignores it"),
+                        ("Max prompts per minute", "maxMsgsPerMin", &mut self.settings.max_msgs, ""),
                     ] {
                         ui.label(label);
-                        if ui.add(egui::TextEdit::singleline(field).desired_width(80.0)).lost_focus() {
-                            limit_saves.push((key, field.clone()));
-                        }
+                        ui.horizontal(|ui| {
+                            if ui.add(egui::TextEdit::singleline(field).desired_width(80.0)).lost_focus() {
+                                limit_saves.push((key, field.clone()));
+                            }
+                            if !note.is_empty() {
+                                ui.label(RichText::new(note).size(12.0).color(p.muted));
+                            }
+                            saved_mark(ui, &saved, key, p.green);
+                        });
                         ui.end_row();
                     }
                 });
             });
             for (k, v) in limit_saves {
-                self.save_setting(k, json!(v));
+                self.save_flashed(k, json!(v));
             }
 
-            // Advanced
             let mut debug = self.debug;
-            section(ui, "Advanced", "Developer tools and diagnostics.", &mut |ui| {
+            let mut reduce = self.reduce_motion;
+            section(ui, "Accessibility & Advanced", "Motion preference and developer diagnostics.", &mut |ui| {
+                ui.checkbox(&mut reduce, "Reduce motion (no animated indicators or transitions)");
                 ui.checkbox(&mut debug, "Show protocol log (raw ACP JSON-RPC traffic)");
             });
+            if reduce != self.reduce_motion {
+                self.set_reduce_motion(reduce);
+                self.save_setting("reduceMotion", json!(reduce.to_string()));
+            }
             if debug != self.debug {
                 self.debug = debug;
                 self.send(json!({"action": "set_debug", "enabled": debug}));

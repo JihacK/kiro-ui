@@ -15,12 +15,40 @@ pub fn chip(ui: &mut egui::Ui, text: &str, fg: Color32, bg: Color32) {
 
 /// A clickable area whose inner widgets (close buttons, links) still get their own clicks:
 /// the area's sense is registered before its children, so the children sit on top.
-pub fn clickable<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
-    ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+/// `label` is the screen-reader name; a focus ring is drawn while it has keyboard focus.
+pub fn clickable<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    let r = ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
         // Selectable labels would swallow clicks meant for the area.
         ui.style_mut().interaction.selectable_labels = false;
         add(ui)
-    })
+    });
+    let label = label.to_string();
+    r.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+    focus_ring(ui, &r.response);
+    r
+}
+
+fn focus_ring(ui: &egui::Ui, r: &egui::Response) {
+    if r.has_focus() {
+        let color = ui.visuals().selection.stroke.color;
+        ui.painter().rect_stroke(r.rect.expand(2.0), CornerRadius::same(6), Stroke::new(2.0, color), egui::StrokeKind::Outside);
+    }
+}
+
+/// Icon-only buttons: `label` becomes the tooltip and the accessible name (instead of the glyph),
+/// and frameless buttons get a visible focus ring.
+pub trait Named {
+    fn named(self, ui: &egui::Ui, label: &str) -> Self;
+}
+
+impl Named for egui::Response {
+    fn named(self, ui: &egui::Ui, label: &str) -> Self {
+        let enabled = self.enabled();
+        let name = label.to_string();
+        self.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &name));
+        focus_ring(ui, &self);
+        self.on_hover_text(label)
+    }
 }
 
 pub fn status_colors(status: &str, p: &theme::Palette) -> (Color32, Color32) {
@@ -93,10 +121,10 @@ impl KiroApp {
     fn header(&mut self, ui: &mut egui::Ui) {
         let p = *self.palette();
         ui.horizontal(|ui| {
-            if !self.sidebar_open && ui.button("☰").on_hover_text("Show sessions (Ctrl+B)").clicked() {
+            if !self.sidebar_open && ui.button("☰").named(ui, "Show sessions (Ctrl+B)").clicked() {
                 self.sidebar_open = true;
             }
-            ui.label(RichText::new("Kiro").size(17.0).strong().color(p.accent));
+            ui.label(RichText::new("Kiro").size(17.0).strong().color(p.accent_text));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let connected = self.model.active_tab().modes.is_some();
                 let (text, fg, bg) = if connected {
@@ -108,14 +136,14 @@ impl KiroApp {
                 };
                 chip(ui, text, fg, bg);
                 ui.separator();
-                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                if ui.button("⚙").named(ui, "Settings").clicked() {
                     self.show_settings = !self.show_settings;
                     if self.show_settings {
                         self.open_settings();
                     }
                 }
                 let icon = if self.dark { "☀" } else { "🌙" };
-                if ui.button(icon).on_hover_text("Toggle theme").clicked() {
+                if ui.button(icon).named(ui, if self.dark { "Switch to light theme" } else { "Switch to dark theme" }).clicked() {
                     let d = !self.dark;
                     self.set_dark(d);
                 }
@@ -126,7 +154,7 @@ impl KiroApp {
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         let p = *self.palette();
         ui.horizontal(|ui| {
-            if ui.small_button("×").on_hover_text("Hide sessions (Ctrl+B)").clicked() {
+            if ui.small_button("×").named(ui, "Hide sessions (Ctrl+B)").clicked() {
                 self.sidebar_open = false;
             }
             ui.label(RichText::new("SESSIONS").size(11.0).strong().color(p.muted));
@@ -148,9 +176,12 @@ impl KiroApp {
         let filter = self.session_filter.to_lowercase();
         let open: Vec<String> = self.model.tabs.iter().filter_map(|t| t.session_id.clone()).collect();
         let mut load = None;
+        let titled = self.model.sessions.iter().filter(|s| !s.title.is_empty()).count();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
+                let mut shown = 0;
                 for s in self.model.sessions.iter().filter(|s| !s.title.is_empty() && (filter.is_empty() || s.title.to_lowercase().contains(&filter))).take(50) {
+                    shown += 1;
                     let is_open = open.contains(&s.id);
                     let label = if is_open { format!("• {}", s.title) } else { s.title.clone() };
                     let color = if is_open { p.text } else { p.muted };
@@ -158,6 +189,16 @@ impl KiroApp {
                     if r.on_hover_text(&s.title).clicked() {
                         load = Some((s.id.clone(), s.title.clone()));
                     }
+                }
+                if shown == 0 {
+                    let msg = if titled > 0 {
+                        format!("No sessions match \"{}\".", self.session_filter.trim())
+                    } else if self.model.active_tab().connecting {
+                        "Loading sessions…".to_string()
+                    } else {
+                        "No sessions in this workspace yet. Send a message to start one.".to_string()
+                    };
+                    ui.add(egui::Label::new(RichText::new(msg).size(12.0).color(p.muted)).wrap());
                 }
             });
         });
@@ -168,7 +209,6 @@ impl KiroApp {
 
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
         let p = *self.palette();
-        let time = ui.input(|i| i.time);
         let mut activate = None;
         let mut close = None;
         egui::ScrollArea::horizontal().id_salt("tabs").show(ui, |ui| {
@@ -177,19 +217,22 @@ impl KiroApp {
                 for (i, t) in self.model.tabs.iter().enumerate() {
                     let active = t.id == self.model.active;
                     let ghost = p.ghosts[i % 6];
-                    let alpha = if t.running { 0.55 + 0.45 * ((time * 3.0).sin() as f32).abs() } else if active { 1.0 } else { 0.45 };
+                    let alpha = if active || t.running { 1.0 } else { 0.45 };
                     let frame = egui::Frame::new()
                         .fill(if active { p.surface2 } else { p.bg })
                         .stroke(Stroke::new(1.0, if active { p.border_hover } else { p.border }))
                         .corner_radius(CornerRadius::same(8))
                         .inner_margin(Margin::symmetric(10, 5));
-                    let r = clickable(ui, |ui| {
+                    let r = clickable(ui, &format!("Switch to tab {}", t.name), |ui| {
                         frame.show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("👻").color(ghost.gamma_multiply(alpha)));
                                 let name: String = t.name.chars().take(28).collect();
                                 ui.label(RichText::new(name).color(if active { p.text } else { p.muted }));
-                                if many && ui.add(egui::Button::new(RichText::new("×").size(10.0)).frame(false)).on_hover_text("Close tab").clicked() {
+                                if t.running {
+                                    ui.label(RichText::new("⟳").color(p.accent_text)).on_hover_text("Running");
+                                }
+                                if many && ui.add(egui::Button::new(RichText::new("×").size(10.0)).frame(false)).named(ui, &format!("Close tab {}", t.name)).clicked() {
                                     close = Some(t.id.clone());
                                 }
                             });
@@ -200,7 +243,7 @@ impl KiroApp {
                         activate = Some(t.id.clone());
                     }
                 }
-                if ui.button("+").on_hover_text("New tab (Ctrl+T)").clicked() {
+                if ui.button("+").named(ui, "New tab (Ctrl+T)").clicked() {
                     self.new_tab();
                 }
             });
@@ -220,7 +263,7 @@ impl KiroApp {
     fn tab_config(&mut self, ui: &mut egui::Ui) {
         let tab_id = self.active_id();
         ui.horizontal(|ui| {
-            // Agent (mode)
+            // ACP "modes" are Kiro agents.
             if let Some(modes) = self.model.active_tab().modes.clone() {
                 let current = modes.available.iter().find(|m| m.id == modes.current).map_or(modes.current.clone(), |m| m.name.clone());
                 let mut chosen = None;
@@ -238,7 +281,6 @@ impl KiroApp {
                     }
                 }
             }
-            // Model
             if let Some(models) = self.model.active_tab().models.clone() {
                 let current = models.available.iter().find(|m| m.id == models.current).map_or(models.current.clone(), |m| m.name.clone());
                 let mut chosen = None;
@@ -259,7 +301,6 @@ impl KiroApp {
                     self.send(json!({"action": "command_options", "tabId": tab_id, "command": "effort", "input": ""}));
                 }
             }
-            // Effort (only when the model supports it)
             if self.model.active_tab().effort_supported {
                 const EFFORTS: [(&str, &str); 6] = [("default", "⚡ Effort"), ("low", "⚡ Low"), ("medium", "⚡⚡ Medium"), ("high", "⚡⚡⚡ High"), ("xhigh", "🔥 X-High"), ("max", "🔥🔥 Max")];
                 let cur = self.model.active_tab().effort.clone().unwrap_or_else(|| "default".into());
@@ -279,7 +320,6 @@ impl KiroApp {
                     }
                 }
             }
-            // Permission policy
             const POLICIES: [(&str, &str); 3] = [("ask", "⛨ Ask"), ("approve-reads", "◑ Auto-reads"), ("allow-all", "◎ Allow all")];
             let pol = self.model.active_tab().perm_policy.clone();
             let label = POLICIES.iter().find(|(k, _)| *k == pol).map_or("⛨ Ask", |(_, l)| l);
@@ -297,7 +337,7 @@ impl KiroApp {
                 self.save_setting("permPolicy", json!(k));
             }
             self.skills_picker(ui);
-            if !self.model.active_tab().messages.is_empty() && ui.add_enabled(!self.dialog_open(), egui::Button::new("⬇")).on_hover_text("Export as Markdown").clicked() {
+            if !self.model.active_tab().messages.is_empty() && ui.add_enabled(!self.dialog_open(), egui::Button::new("⬇")).named(ui, "Export as Markdown").clicked() {
                 self.export();
             }
             if let Some(sid) = self.model.active_tab().session_id.clone() {
@@ -427,7 +467,7 @@ impl KiroApp {
         });
         egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
             for l in self.model.logs.iter().rev().take(50).rev() {
-                let (arrow, color) = if l.dir == "out" { ("→", p.accent) } else { ("←", p.green) };
+                let (arrow, color) = if l.dir == "out" { ("→", p.accent_text) } else { ("←", p.green) };
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(arrow).color(color).monospace().size(11.0));
                     ui.label(RichText::new(&l.msg).monospace().size(11.0).color(p.muted));
@@ -461,7 +501,7 @@ impl KiroApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.add(egui::Label::new(RichText::new(&t.text).color(fg).size(13.0)).wrap());
-                                if ui.add(egui::Button::new("×").frame(false)).clicked() {
+                                if ui.add(egui::Button::new("×").frame(false)).named(ui, "Dismiss notification").clicked() {
                                     dismiss = Some(t.id);
                                 }
                             });
@@ -497,13 +537,14 @@ impl KiroApp {
                     let sum = model::turn_summary(&msgs, idx, next);
                     let text: String = msgs[idx].text.chars().take(80).collect();
                     let more = if msgs[idx].text.chars().count() > 80 { "…" } else { "" };
-                    let r = egui::Frame::new()
+                    let r = clickable(ui, &format!("Rewind to turn {}: {text}", pos + 1), |ui| {
+                        egui::Frame::new()
                         .fill(p.surface2)
                         .corner_radius(CornerRadius::same(6))
                         .inner_margin(Margin::symmetric(10, 6))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.label(RichText::new(format!("Turn {}", pos + 1)).size(11.0).color(p.accent));
+                            ui.label(RichText::new(format!("Turn {}", pos + 1)).size(11.0).color(p.accent_text));
                             ui.label(format!("{text}{more}"));
                             if sum.tools > 0 {
                                 let mut s = format!("{} {}", sum.tools, if sum.tools == 1 { "tool" } else { "tools" });
@@ -518,8 +559,8 @@ impl KiroApp {
                                 ui.label(RichText::new(s).size(11.0).color(p.muted));
                             }
                         })
-                        .response
-                        .interact(Sense::click());
+                    })
+                    .response;
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         chosen = Some(idx);
                     }
@@ -552,7 +593,7 @@ mod tests {
         let input = RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 200.0))), events, ..Default::default() };
         let mut output = ctx.run_ui(input, |ui| {
             let mut button = None;
-            let area = clickable(ui, |ui| {
+            let area = clickable(ui, "Switch to tab", |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Tab name");
                     button = Some(ui.button("×"));
@@ -597,5 +638,37 @@ mod tests {
             button |= b;
         }
         assert!(area && !button);
+    }
+}
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    fn accesskit_labels(build: impl FnMut(&mut egui::Ui)) -> Vec<String> {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 200.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, build);
+        out.textures_delta.clear();
+        let update = out.platform_output.accesskit_update.expect("accesskit update");
+        update.nodes.iter().filter_map(|(_, n)| n.label().map(str::to_owned)).collect()
+    }
+
+    #[test]
+    fn icon_button_is_announced_by_its_name_not_its_glyph() {
+        let labels = accesskit_labels(|ui| {
+            ui.button("⚙").named(ui, "Settings");
+        });
+        assert!(labels.iter().any(|l| l == "Settings"), "{labels:?}");
+        assert!(!labels.iter().any(|l| l == "⚙"), "{labels:?}");
+    }
+
+    #[test]
+    fn clickable_area_has_a_name() {
+        let labels = accesskit_labels(|ui| {
+            clickable(ui, "Switch to tab Fix the bug", |ui| ui.label("Fix the bug"));
+        });
+        assert!(labels.iter().any(|l| l == "Switch to tab Fix the bug"), "{labels:?}");
     }
 }

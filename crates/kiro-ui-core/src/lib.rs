@@ -59,7 +59,7 @@ impl AppState {
         }
     }
 
-    /// `Number(setting) || default` semantics from the original server.
+    /// Zero or unparsable values fall back to the default.
     fn setting_num(&self, key: &str, default: f64) -> f64 {
         match self.setting(key).and_then(|v| v.trim().parse::<f64>().ok()) {
             Some(n) if n != 0.0 && !n.is_nan() => n,

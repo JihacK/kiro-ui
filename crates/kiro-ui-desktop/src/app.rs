@@ -20,7 +20,7 @@ pub enum Bg {
     Workspace { tab: String, path: Option<String> },
     Attached { tab: String, items: Vec<Attachment>, errors: Vec<String> },
     Exported(Result<String, String>),
-    Models(Vec<(String, String, String)>),
+    Models(Vec<(String, String, String)>, Option<String>),
     TestResult(bool, String),
 }
 
@@ -60,7 +60,6 @@ impl Attachment {
     }
 }
 
-/// Per-tab input state.
 #[derive(Default)]
 pub struct TabUi {
     pub input: String,
@@ -94,10 +93,12 @@ pub struct SettingsForm {
     pub test_result: Option<(bool, String)>,
     pub models: Vec<(String, String, String)>,
     pub models_loading: bool,
+    pub models_error: Option<String>,
     pub trust: JsonMap,
     pub kiro_edits: HashMap<String, String>,
     pub kiro_pending: HashMap<String, Instant>,
-    pub saved_flash: Option<(&'static str, Instant)>,
+    /// Settings keys saved recently, for the "✔ Saved" mark.
+    pub saved_flash: HashMap<String, Instant>,
 }
 
 pub struct KiroApp {
@@ -112,11 +113,15 @@ pub struct KiroApp {
     pub md: CommonMarkCache,
     pub tab_ui: HashMap<String, TabUi>,
     pub dark: bool,
+    /// Theme saved on exit; only the user's toggle changes it.
+    saved_dark: bool,
     pub sidebar_open: bool,
     pub show_settings: bool,
     pub show_rewind: bool,
     pub editor: String,
     pub debug: bool,
+    /// No looping animations; egui transitions off.
+    pub reduce_motion: bool,
     pub session_filter: String,
     pub skill_filter: String,
     pub settings: SettingsForm,
@@ -163,11 +168,13 @@ impl KiroApp {
             md: CommonMarkCache::default(),
             tab_ui: HashMap::new(),
             dark,
+            saved_dark: dark,
             sidebar_open,
             show_settings: false,
             show_rewind: false,
             editor: state.setting("editor").unwrap_or_else(|| "vscode".into()),
             debug: state.setting("debugEnabled").as_deref() == Some("true"),
+            reduce_motion: state.setting("reduceMotion").as_deref() == Some("true"),
             session_filter: String::new(),
             skill_filter: String::new(),
             settings: SettingsForm::default(),
@@ -176,6 +183,7 @@ impl KiroApp {
             paste_counter: 0,
             dialog_open: Arc::new(AtomicBool::new(false)),
         };
+        app.set_reduce_motion(app.reduce_motion);
         if let Some(p) = state.setting("permPolicy") {
             app.model.active_tab_mut().perm_policy = p;
         }
@@ -185,7 +193,6 @@ impl KiroApp {
         app
     }
 
-    // ------------------------------------------------------------- plumbing
 
     pub fn send(&self, msg: Value) {
         self.client.send(msg);
@@ -268,6 +275,11 @@ impl KiroApp {
                 self.show_settings = true;
                 self.open_settings();
             }
+            if std::env::var_os("KIRO_UI_DEMO_LIGHT").is_some() {
+                std::env::remove_var("KIRO_UI_DEMO_LIGHT");
+                self.dark = false;
+                theme::apply(&self.ctx, false);
+            }
         }
         while let Ok(bg) = self.bg_rx.try_recv() {
             match bg {
@@ -302,8 +314,9 @@ impl KiroApp {
                     Err(e) if e == EXPORT_CANCELLED => {}
                     Err(e) => self.model.toast(format!("Export failed: {e}"), ToastKind::Error),
                 },
-                Bg::Models(list) => {
+                Bg::Models(list, error) => {
                     self.settings.models = list;
+                    self.settings.models_error = error;
                     self.settings.models_loading = false;
                 }
                 Bg::TestResult(ok, msg) => {
@@ -312,12 +325,10 @@ impl KiroApp {
                 }
             }
         }
-        // Toasts disappear after 5s.
         let now = Instant::now();
         self.model.toasts.retain(|t| now.duration_since(t.created) < Duration::from_secs(5));
     }
 
-    // -------------------------------------------------------------- actions
 
     pub fn active_id(&self) -> String {
         self.model.active.clone()
@@ -527,8 +538,14 @@ impl KiroApp {
         self.dialog_open.load(Ordering::SeqCst)
     }
 
+    pub fn set_reduce_motion(&mut self, on: bool) {
+        self.reduce_motion = on;
+        self.ctx.all_styles_mut(|s| s.animation_time = if on { 0.0 } else { 1.0 / 12.0 });
+    }
+
     pub fn set_dark(&mut self, dark: bool) {
         self.dark = dark;
+        self.saved_dark = dark;
         theme::apply(&self.ctx, dark);
     }
 
@@ -566,7 +583,22 @@ impl KiroApp {
         if sidebar {
             self.sidebar_open = !self.sidebar_open;
         }
-        // Files dropped onto the window become attachments.
+        // Tab switching: Ctrl+Tab / Ctrl+Shift+Tab cycle, Ctrl/⌘+1..9 jump.
+        let n = self.model.tabs.len();
+        let cur = self.model.tabs.iter().position(|t| t.id == self.model.active).unwrap_or(0);
+        let target = ctx.input_mut(|i| {
+            if i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab) {
+                return Some((cur + n - 1) % n);
+            }
+            if i.consume_key(Modifiers::CTRL, Key::Tab) {
+                return Some((cur + 1) % n);
+            }
+            const DIGITS: [Key; 9] = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9];
+            DIGITS.iter().position(|k| i.consume_key(Modifiers::COMMAND, *k)).filter(|d| *d < n)
+        });
+        if let Some(t) = target {
+            self.model.active = self.model.tabs[t].id.clone();
+        }
         let dropped: Vec<String> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_string_lossy().into_owned()).filter(|p| !p.is_empty()).collect());
         if !dropped.is_empty() {
             self.attach_paths(dropped);
@@ -694,14 +726,15 @@ impl eframe::App for KiroApp {
         // Only animate while something is live; otherwise egui sleeps until input/events.
         let t = self.model.active_tab();
         if t.running || t.thinking.is_some() || t.connecting {
-            ctx.request_repaint_after(Duration::from_millis(250));
-        } else if !self.model.toasts.is_empty() || self.tab_ui.values().any(|u| u.pending_options.is_some()) || !self.settings.kiro_pending.is_empty() {
+            // Reduced motion only needs the 1s thinking timer.
+            ctx.request_repaint_after(Duration::from_millis(if self.reduce_motion { 1000 } else { 250 }));
+        } else if !self.model.toasts.is_empty() || self.tab_ui.values().any(|u| u.pending_options.is_some()) || !self.settings.kiro_pending.is_empty() || !self.settings.saved_flash.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(150));
         }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, PERSIST_KEY, &Persisted { dark: self.dark, sidebar_open: self.sidebar_open });
+        eframe::set_value(storage, PERSIST_KEY, &Persisted { dark: self.saved_dark, sidebar_open: self.sidebar_open });
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

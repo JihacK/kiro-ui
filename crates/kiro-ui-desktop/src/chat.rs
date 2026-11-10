@@ -4,7 +4,7 @@
 use crate::app::KiroApp;
 use crate::model::{Msg, Role, ToolEntry};
 use crate::theme::Palette;
-use crate::view::{chip, status_colors};
+use crate::view::{chip, clickable, status_colors};
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke};
 use egui_commonmark::CommonMarkViewer;
 use serde_json::Value;
@@ -122,11 +122,14 @@ impl KiroApp {
                 let secs = th.start.elapsed().as_secs();
                 egui::Frame::new().fill(p.surface).stroke(Stroke::new(1.0, p.border)).corner_radius(CornerRadius::same(8)).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    let r = ui.horizontal(|ui| {
-                        ui.label(RichText::new(if th.collapsed { "⏵ 💭 Thinking" } else { "⏷ 💭 Thinking" }).color(p.accent));
-                        ui.label(RichText::new(format!("{secs}s")).color(p.dim).size(11.0));
+                    let label = if th.collapsed { "Thinking, show reasoning" } else { "Thinking, hide reasoning" };
+                    let r = clickable(ui, label, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(if th.collapsed { "⏵ 💭 Thinking" } else { "⏷ 💭 Thinking" }).color(p.accent_text));
+                            ui.label(RichText::new(format!("{secs}s")).color(p.dim).size(11.0));
+                        })
                     });
-                    if r.response.interact(egui::Sense::click()).clicked() {
+                    if r.response.clicked() {
                         clicks.push(Click::ToggleThinking);
                     }
                     if !th.collapsed {
@@ -143,7 +146,7 @@ impl KiroApp {
                     for e in &tab.plan {
                         let (icon, color) = match e.status.as_str() {
                             "completed" => ("✔", p.green),
-                            "in_progress" => ("⏵", p.accent),
+                            "in_progress" => ("⏵", p.accent_text),
                             _ => ("○", p.muted),
                         };
                         ui.horizontal_wrapped(|ui| {
@@ -167,8 +170,12 @@ impl KiroApp {
                 let ghost = p.ghosts[self.model.tabs.iter().position(|x| x.id == tab.id).unwrap_or(0) % 6];
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("👻").color(ghost));
-                    let dots = 1 + ((t * 3.0) as usize % 3);
-                    ui.label(RichText::new(".".repeat(dots)).color(p.muted).size(18.0));
+                    if self.reduce_motion {
+                        ui.label(RichText::new("Working…").color(p.muted));
+                    } else {
+                        let dots = 1 + ((t * 3.0) as usize % 3);
+                        ui.label(RichText::new(".".repeat(dots)).color(p.muted).size(18.0));
+                    }
                 });
             }
 
@@ -179,14 +186,14 @@ impl KiroApp {
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
                         for o in &perm.options {
-                            let (fg, bg) = if o.kind.contains("allow") {
-                                (Color32::WHITE, p.accent)
-                            } else if o.kind.contains("reject") {
-                                (p.red, p.red.gamma_multiply(0.12))
-                            } else {
-                                (p.text, p.surface2)
+                            // Only the one-time allow is the filled primary; "always" writes a lasting trust rule.
+                            let btn = match o.kind.as_str() {
+                                "allow_once" => egui::Button::new(RichText::new(&o.name).color(Color32::WHITE)).fill(p.accent),
+                                "allow_always" => egui::Button::new(RichText::new(&o.name).color(p.accent_text)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, p.accent)),
+                                k if k.contains("reject") => egui::Button::new(RichText::new(&o.name).color(p.red)).fill(p.red.gamma_multiply(0.12)),
+                                _ => egui::Button::new(RichText::new(&o.name).color(p.text)).fill(p.surface2),
                             };
-                            if ui.add(egui::Button::new(RichText::new(&o.name).color(fg)).fill(bg)).clicked() {
+                            if ui.add(btn).clicked() {
                                 clicks.push(Click::Permission(perm.request_id.clone(), o.id.clone(), perm.title.clone()));
                             }
                         }
@@ -256,13 +263,16 @@ impl KiroApp {
         let done = group.iter().filter(|m| m.tool.as_ref().is_some_and(|t| t.status == "completed")).count();
         egui::Frame::new().stroke(Stroke::new(1.0, p.border)).corner_radius(CornerRadius::same(8)).inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            let r = ui.horizontal(|ui| {
-                ui.label(RichText::new(if collapsed { "⏵" } else { "⏷" }).color(p.dim).size(11.0));
-                ui.label(RichText::new(format!("{} tool calls", group.len())).color(p.muted));
-                let (fg, bg) = status_colors(if done == group.len() { "completed" } else { "pending" }, p);
-                chip(ui, &format!("{done}/{}", group.len()), fg, bg);
+            let label = format!("{} tool calls, {done} completed, {}", group.len(), if collapsed { "expand" } else { "collapse" });
+            let r = clickable(ui, &label, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(if collapsed { "⏵" } else { "⏷" }).color(p.dim).size(11.0));
+                    ui.label(RichText::new(format!("{} tool calls", group.len())).color(p.muted));
+                    let (fg, bg) = status_colors(if done == group.len() { "completed" } else { "pending" }, p);
+                    chip(ui, &format!("{done}/{}", group.len()), fg, bg);
+                })
             });
-            if r.response.interact(egui::Sense::click()).clicked() {
+            if r.response.clicked() {
                 clicks.push(Click::ToggleGroup(key));
             }
             if !collapsed {
@@ -279,11 +289,11 @@ impl KiroApp {
         let expandable = !t.content.is_empty() || t.raw_input.is_some() || t.raw_output.is_some() || !t.stream_output.is_empty();
         egui::Frame::new().fill(p.surface).stroke(Stroke::new(1.0, p.border)).corner_radius(CornerRadius::same(8)).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            let header = crate::view::clickable(ui, |ui| ui.horizontal(|ui| {
+            let header = clickable(ui, &format!("Tool call {}: {}, show details", t.title, t.status), |ui| ui.horizontal(|ui| {
                 if expandable {
                     ui.label(RichText::new(if t.expanded { "⏷" } else { "⏵" }).color(p.dim).size(11.0));
                 }
-                ui.label(RichText::new("🔧").color(p.accent));
+                ui.label(RichText::new("🔧").color(p.accent_text));
                 let title = if t.title.is_empty() { t.kind.clone().unwrap_or_else(|| "tool".into()) } else { t.title.clone() };
                 // "Read /path/to/file" → clickable path.
                 match split_path(&title) {
@@ -402,7 +412,7 @@ impl KiroApp {
                     ui.label(RichText::new("Available Commands").strong());
                     egui::Grid::new("help-grid").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
                         for c in &self.model.commands {
-                            ui.label(RichText::new(&c.name).monospace().color(p.accent));
+                            ui.label(RichText::new(&c.name).monospace().color(p.accent_text));
                             ui.label(RichText::new(&c.description).color(p.muted));
                             ui.end_row();
                         }

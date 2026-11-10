@@ -338,7 +338,8 @@ pub struct Model {
     pub cmd_hint: Option<String>,
     /// Bumped whenever `cmd_options` changes so the input resets its selection.
     pub cmd_options_rev: u64,
-    seen_mcp_inits: HashSet<String>,
+    /// (server, error) pairs already toasted, so a repeated failure isn't shown twice.
+    toasted_mcp_failures: HashSet<(String, String)>,
     next_uid: u64,
     next_toast: u64,
 }
@@ -385,7 +386,7 @@ impl Model {
             cmd_options: None,
             cmd_hint: None,
             cmd_options_rev: 0,
-            seen_mcp_inits: HashSet::new(),
+            toasted_mcp_failures: HashSet::new(),
             next_uid: 1,
             next_toast: 1,
         }
@@ -710,7 +711,7 @@ impl Model {
                     let skills = self.tab(&tid).map(|t| t.skills.clone()).unwrap_or_default();
                     fx.push(Effect::Send(json!({"action": "prompt", "tabId": tid, "text": with_skills(&skills, &next)}), 0));
                 } else {
-                    // The queue path keeps the accumulator for the next turn, like the web client.
+                    // Suggest only after the last queued prompt; queued turns keep accumulating context.
                     if suggest_ctx.encode_utf16().count() >= 40 {
                         fx.push(Effect::Suggest { tab: tid.clone(), context: suggest_ctx });
                     }
@@ -840,10 +841,9 @@ impl Model {
                 self.toast(message, ToastKind::Error);
             }
             "McpServerInitialized" => {
+                // Connections show in the MCP panel; only failures and sign-in prompts get toasts.
                 let name = s(data.get("serverName")).unwrap_or_default();
-                if self.seen_mcp_inits.insert(name.clone()) {
-                    self.toast(format!("MCP server \"{name}\" connected"), ToastKind::Info);
-                }
+                self.toasted_mcp_failures.retain(|(n, _)| *n != name);
                 for srv in self.mcp_servers.iter_mut().filter(|x| x.name == name) {
                     srv.status = "running".into();
                 }
@@ -864,7 +864,9 @@ impl Model {
                     self.set_mcp_status(&name, "retrying", false);
                     fx.push(Effect::Send(json!({"action": "prompt", "tabId": self.active, "text": "/mcp reconnect"}), 1000));
                 } else {
-                    self.toast(format!("MCP server \"{name}\" failed: {error}"), ToastKind::Error);
+                    if self.toasted_mcp_failures.insert((name.clone(), error.clone())) {
+                        self.toast(format!("MCP server \"{name}\" failed: {error}"), ToastKind::Error);
+                    }
                     self.set_mcp_status(&name, "failed", false);
                 }
             }
@@ -1084,7 +1086,6 @@ pub fn turn_summary(messages: &[Msg], from: usize, to: Option<usize>) -> TurnSum
     TurnSummary { tools, files, commands }
 }
 
-/// Chat export as Markdown.
 pub fn export_markdown(tab: &Tab) -> String {
     let mut lines = vec![format!("# {}\n", tab.name)];
     for m in &tab.messages {
@@ -1215,7 +1216,11 @@ mod tests {
         let fx = m.handle(&json!({"type": "McpServerInitFailure", "serverName": "gh", "error": "boom"}));
         assert!(fx.iter().any(|e| matches!(e, Effect::Send(v, 1000) if v["text"] == "/mcp reconnect")));
         m.handle(&json!({"type": "McpServerInitFailure", "serverName": "x", "error": "No such file"}));
-        assert!(m.toasts.iter().any(|t| t.kind == ToastKind::Error && t.text.contains("\"x\" failed")));
+        m.handle(&json!({"type": "McpServerInitFailure", "serverName": "x", "error": "No such file"}));
+        assert_eq!(m.toasts.iter().filter(|t| t.kind == ToastKind::Error && t.text.contains("\"x\" failed")).count(), 1, "repeated failure is toasted once");
+        let before = m.toasts.len();
+        m.handle(&json!({"type": "McpServerInitialized", "serverName": "y"}));
+        assert_eq!(m.toasts.len(), before, "connections don't toast");
     }
 
     #[test]

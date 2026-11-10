@@ -13,7 +13,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-/// ACP protocol version spoken by this client.
 pub const PROTOCOL_VERSION: u64 = 1;
 
 static NEXT_AGENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -30,7 +29,7 @@ enum Sig {
 pub struct Agent {
     pub id: u64,
     pub conn: Arc<RpcConn>,
-    /// Shared by all tabs of a WebSocket connection (vs. owned by one tab).
+    /// Shared by all tabs of one client (vs. owned by one tab).
     pub shared: bool,
     /// For a per-tab agent, the tab that owns it.
     pub owner_tab: Option<String>,

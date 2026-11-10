@@ -1,7 +1,7 @@
 //! Translate ACP `session/update` and Kiro `_kiro.dev/*` notifications into UI events.
 //!
-//! Field semantics mirror the original JS: a missing source field is omitted
-//! from the event, and `a || b` falls through on falsy values.
+//! A missing source field is omitted from the event, and `a || b` falls
+//! through on falsy values (the web client relies on both).
 
 use crate::truthy;
 use serde_json::{json, Map, Value};
