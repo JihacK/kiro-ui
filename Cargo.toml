@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/kiro-ui-core", "crates/kiro-ui-server", "crates/kiro-ui-desktop"]
+members = ["crates/kiro-ui-core", "crates/kiro-ui-app", "crates/kiro-ui", "crates/kiro-ui-web", "xtask"]
+# `cargo run` / `cargo build` without -p target the app.
+default-members = ["crates/kiro-ui"]
 
 [workspace.package]
 version = "1.3.2"

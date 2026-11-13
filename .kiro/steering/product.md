@@ -1,6 +1,6 @@
 # Product Overview
 
-Kiro UI is a lightweight native desktop chat interface for Kiro CLI (Rust + egui), connected via the Agent Client Protocol (ACP). An optional browser mode serves the original web frontend from the same Rust core.
+Kiro UI is a lightweight native desktop chat interface for Kiro CLI (Rust + egui), connected via the Agent Client Protocol (ACP). An optional browser mode (`kiro-ui --server`, built with the `server` feature) serves the same egui UI compiled to wasm from the same Rust core.
 
 ## Purpose
 
@@ -44,6 +44,6 @@ Provide a visual alternative to the terminal for Kiro's agentic capabilities wit
 ## Security
 
 - Desktop: no network listeners; single-instance via a per-user Unix socket
-- Browser mode: 127.0.0.1 only, per-start auth token, origin validation, CSP headers, DOMPurify on rendered Markdown
+- Browser mode: 127.0.0.1 only, per-start token, Host and Origin validation, CSP headers (`wasm-unsafe-eval` for the wasm UI)
 - External links limited to http(s) and editor schemes
 - Rate limiting and resource limits (configurable)

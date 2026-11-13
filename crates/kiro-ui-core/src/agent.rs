@@ -213,3 +213,84 @@ fn send_signal(child: &mut tokio::process::Child, sig: Sig) {
     let _ = sig;
     let _ = child.start_kill();
 }
+
+/// Kiro session ids are UUIDs; anything else is refused before it reaches a command line.
+pub fn valid_session_id(id: &str) -> bool {
+    (1..=128).contains(&id.len())
+        && id.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The Kiro CLI binary: the configured ACP command's program when it is kiro-cli, else `kiro-cli` on PATH.
+fn kiro_cli_program(app: &AppState) -> String {
+    let configured = (app.setting("transport").as_deref() != Some("tcp"))
+        .then(|| app.setting("acpCommand"))
+        .flatten()
+        .and_then(|c| c.split_whitespace().next().map(str::to_owned))
+        .filter(|p| std::path::Path::new(p).file_stem().is_some_and(|s| s.to_string_lossy().starts_with("kiro-cli")));
+    configured.unwrap_or_else(|| "kiro-cli".into())
+}
+
+/// First line of the CLI's message, without colour codes or the `Error: ` prefix.
+fn cli_message(out: &std::process::Output) -> String {
+    static ANSI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]").unwrap());
+    let text = format!("{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let text = ANSI.replace_all(&text, "");
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("unknown error");
+    let line = line.strip_prefix("Error: ").unwrap_or(line);
+    line.chars().take(300).collect()
+}
+
+/// Delete a saved session with `kiro-cli chat --delete-session` (ACP has no delete method).
+/// Kiro refuses while any process still has the session loaded; that error is returned as-is.
+pub async fn delete_session(app: &AppState, session_id: &str) -> Result<(), String> {
+    if !valid_session_id(session_id) {
+        return Err("invalid session id".into());
+    }
+    let program = kiro_cli_program(app);
+    let mut cmd = Command::new(&program);
+    cmd.args(["chat", "--delete-session", session_id])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = tokio::time::timeout(Duration::from_secs(30), cmd.output())
+        .await
+        .map_err(|_| format!("{program} did not finish within 30s"))?
+        .map_err(|e| format!("spawn {program}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(cli_message(&out))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_ids_that_could_be_flags_or_paths_are_refused() {
+        assert!(valid_session_id("5b8d5c8f-9d07-46e7-85ed-19108c580b02"));
+        for bad in ["", "-d", "--help", "../x", "a b", "a;rm", "a/b", &"a".repeat(129)] {
+            assert!(!valid_session_id(bad), "{bad:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_message_is_the_first_line_without_colour_or_prefix() {
+        use std::os::unix::process::ExitStatusExt;
+        let out = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"\x1b[31mError: \x1b[0mFailed to delete chat session x: Session is active in another process (PID 1)\nmore\n".to_vec(),
+        };
+        assert_eq!(cli_message(&out), "Failed to delete chat session x: Session is active in another process (PID 1)");
+    }
+}

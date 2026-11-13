@@ -5,6 +5,9 @@
 //! via [`Client::send`] and receives `{"type": ...}` events through the emit
 //! callback given to [`Client::start`].
 //!
+//! Local actions (settings, dialogs, suggestions, ...) are answered directly
+//! by `local`, outside the rate limit and the startup wait.
+//!
 //! Agent modes:
 //! - shared (default): all tabs of the window are sessions on ONE agent
 //!   process; notifications are routed by `sessionId`.
@@ -664,6 +667,17 @@ impl Hub {
 
 
     fn on_client_message(self: &Arc<Self>, msg: Value) {
+        let action = msg.get("action").and_then(Value::as_str).unwrap_or_default();
+        if crate::local::is_local(action) {
+            let hub = self.clone();
+            let action = action.to_string();
+            tokio::spawn(async move {
+                if let Some(ev) = crate::local::run(&hub.app, &action, &msg).await {
+                    hub.emit(ev);
+                }
+            });
+            return;
+        }
         {
             let mut inner = self.inner.lock().unwrap();
             let now = Instant::now();
@@ -727,6 +741,32 @@ impl Hub {
         if let Some(tab) = inner.remove_tab(tab_id) {
             self.release_tab(&mut inner, tab);
         }
+    }
+
+    /// Unload `sid` from this window (closing any tab still on it), then delete it.
+    async fn delete_session(&self, sid: &str) -> Result<(), String> {
+        if !agent::valid_session_id(sid) {
+            return Err("invalid session id".into());
+        }
+        let held: Vec<Arc<Agent>> = {
+            let mut inner = self.inner.lock().unwrap();
+            let open: Vec<String> = inner.tabs.iter().filter(|t| t.session_id == sid).map(|t| t.id.clone()).collect();
+            let mut held = Vec::new();
+            for id in open {
+                if let Some(tab) = inner.remove_tab(&id) {
+                    if !tab.agent.is_dead() {
+                        held.push(tab.agent.clone());
+                    }
+                    self.release_tab(&mut inner, tab);
+                }
+            }
+            held
+        };
+        // Kiro refuses to delete a loaded session, so wait for the unload.
+        for a in &held {
+            let _ = a.conn.request_timeout("_kiro.dev/session/terminate", json!({"sessionId": sid}), Duration::from_secs(5)).await;
+        }
+        agent::delete_session(&self.app, sid).await
     }
 
     async fn run_action(self: &Arc<Self>, action: &str, tab_id: &str, msg: &Value) -> Result<(), RpcError> {
@@ -838,6 +878,21 @@ impl Hub {
                 if let Some(t) = inner.tab(tab_id) {
                     self.emit_ready(t);
                 }
+            }
+            "delete_session" => {
+                let Some(sid) = str_of(msg.get("sessionId")) else { return Ok(()) };
+                let result = self.delete_session(&sid).await;
+                let mut m = Map::new();
+                m.insert("tabId".into(), json!(tab_id));
+                m.insert("sessionId".into(), json!(sid));
+                match result {
+                    Ok(()) => m.insert("type".into(), json!("SessionDeleted")),
+                    Err(e) => {
+                        m.insert("message".into(), json!(e));
+                        m.insert("type".into(), json!("SessionDeleteFailed"))
+                    }
+                };
+                self.emit(Value::Object(m));
             }
             "list_sessions" => {
                 if let Some((agent, _)) = self.any_session(tab_id) {

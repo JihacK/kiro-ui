@@ -11,6 +11,7 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "p
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 getrandom = "0.3"
 hex = "0.4.3"
+base64 = "0.22"
 regex = "1.13.1"
 dirs = "6"
 aws-config = { version = "1.13.1", features = ["behavior-version-latest"] }

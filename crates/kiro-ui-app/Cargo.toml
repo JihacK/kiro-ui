@@ -1,0 +1,31 @@
+[package]
+name = "kiro-ui-app"
+description = "Kiro UI interface (egui), shared by the desktop window and the browser (wasm) build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# Compiles for native and wasm32-unknown-unknown: no tokio, no filesystem, no kiro-ui-core.
+# Everything outside the UI goes through `Backend` as JSON actions and events.
+[dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+# Bundled monochrome emoji + icon fonts (~0.7 MB) for the UI's symbols.
+egui = { version = "0.37.0", default-features = false, features = ["monochrome_emoji_fonts"] }
+egui_commonmark = { version = "0.26.0", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+similar = "3.2.1"
+base64 = "0.22"
+# Encodes pasted clipboard images.
+png = "0.18"
+# std::time::Instant panics on wasm32; this is the same type natively.
+web-time = "1.1.0"
+
+# Reads browser-dropped files (eframe only exposes them asynchronously). Already in the lockfile via eframe.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4.80"
+
+# winit needs a backend to build natively (also lets `cargo test -p kiro-ui-app` run on its own).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["wayland", "x11"] }

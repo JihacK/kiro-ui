@@ -1,0 +1,30 @@
+[package]
+name = "kiro-ui"
+description = "Kiro UI: native desktop app (egui), with an optional browser mode (`--server`)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kiro-ui"
+path = "src/main.rs"
+
+[features]
+default = []
+# `kiro-ui --server`: serve the wasm build of the same UI to a browser. Run `cargo xtask web` first.
+server = ["dep:axum", "dep:rust-embed", "dep:mime_guess", "dep:regex", "dep:futures-util", "tokio/net", "tokio/signal", "tokio/macros"]
+
+[dependencies]
+kiro-ui-core = { path = "../kiro-ui-core" }
+kiro-ui-app = { path = "../kiro-ui-app" }
+# Native window features; the shared UI crate enables the portable ones.
+eframe = { version = "0.37.0", default-features = false, features = ["wayland", "x11", "accesskit", "clipboard"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "time", "sync"] }
+
+axum = { version = "0.8.9", optional = true, default-features = false, features = ["http1", "query", "tokio", "ws"] }
+rust-embed = { version = "8.13.0", optional = true }
+mime_guess = { version = "2.0.5", optional = true }
+regex = { version = "1.13.1", optional = true }
+futures-util = { version = "0.3.34", optional = true, default-features = false, features = ["sink", "std"] }

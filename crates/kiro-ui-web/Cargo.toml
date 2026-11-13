@@ -1,0 +1,20 @@
+[package]
+name = "kiro-ui-web"
+description = "Browser entry point: the kiro-ui-app interface compiled to wasm, talking to `kiro-ui --server` over a WebSocket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Empty on native targets, so workspace-wide builds and clippy still work.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+kiro-ui-app = { path = "../kiro-ui-app" }
+eframe = { version = "0.37.0", default-features = false, features = ["glow"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+# Must match the installed wasm-bindgen CLI (`cargo xtask web` checks).
+wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4.80"
+web-sys = { version = "0.3.107", features = ["Window", "Document", "Element", "HtmlCanvasElement", "HtmlMetaElement", "Location", "WebSocket", "MessageEvent", "CloseEvent", "Event", "BinaryType"] }

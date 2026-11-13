@@ -7,51 +7,36 @@ on:
     branches: [main]
 
 jobs:
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Unit tests with coverage
-        run: npm run test:coverage
-
-      - name: Build
-        run: npm run build
-
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
 
-      # The browser-mode server embeds dist/client at compile time.
-      - run: npm ci && npm run build
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.130
 
       - name: Clippy
-        run: npm run lint:rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Clippy (server feature)
+        run: cargo clippy -p kiro-ui --all-targets --features server -- -D warnings
+
+      - name: Check wasm UI
+        run: cargo check -p kiro-ui-web --target wasm32-unknown-unknown
 
       - name: Tests
-        run: npm run test:rust
+        run: cargo test --workspace
+
+      - name: Build wasm UI
+        run: cargo xtask web
+
+      - name: Build release with browser mode
+        run: cargo build --release -p kiro-ui --features server

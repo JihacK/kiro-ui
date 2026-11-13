@@ -174,5 +174,5 @@ Download button exports the conversation as a formatted `.md` file named after t
 | Permission Prompts | Interactive allow/deny with persistent trust rules |
 | Crash Auto-Reconnect | Detects dead agent, auto-restarts within 1 second |
 | TCP Transport | Connect to remote `kiro-cli acp` over TCP (for Docker/remote) |
-| Electron Desktop | Native macOS/Windows/Linux app |
+| Browser Mode | Same UI compiled to wasm, served by `kiro-ui --server` |
 | Protocol Debug | Raw JSON-RPC traffic inspection when enabled |

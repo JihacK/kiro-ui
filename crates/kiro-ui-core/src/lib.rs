@@ -2,10 +2,14 @@
 //! over newline-delimited JSON-RPC), plus settings, trust rules and suggestions.
 //!
 //! Transport-agnostic: the native egui app drives a [`Client`] directly; the
-//! optional `kiro-ui-server` binary exposes the same client over a WebSocket.
+//! optional server mode exposes the same client over a WebSocket. Besides chat
+//! actions, the client answers "local" actions (settings, trust, suggestions,
+//! dialogs, attachments, export) without needing a live agent.
 
 mod agent;
+pub mod attachments;
 mod hub;
+mod local;
 mod notifications;
 mod permissions;
 pub mod picker;
@@ -210,7 +214,7 @@ pub fn init_state() -> Arc<AppState> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
@@ -228,6 +232,10 @@ mod tests {
             shutting_down: std::sync::atomic::AtomicBool::new(false),
             suggestions: suggestions::ClientCache::default(),
         }
+    }
+
+    pub(crate) fn test_state(name: &str) -> AppState {
+        state_in(&temp_dir(name))
     }
 
     fn temp_dir(name: &str) -> PathBuf {

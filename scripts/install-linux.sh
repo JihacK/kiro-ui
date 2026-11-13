@@ -1,10 +1,17 @@
 #!/usr/bin/env sh
 # Build the native desktop app and install it for the current user:
 #   ~/.local/bin/kiro-ui, a desktop entry and an icon. No root needed.
+# With --with-server the binary also has browser mode (kiro-ui --server);
+# that needs the wasm toolchain, see README.
 set -eu
 cd "$(dirname "$0")/.."
 
-cargo build --release -p kiro-ui-desktop
+if [ "${1:-}" = "--with-server" ]; then
+  cargo xtask web
+  cargo build --release -p kiro-ui --features server
+else
+  cargo build --release -p kiro-ui
+fi
 
 prefix="${PREFIX:-$HOME/.local}"
 install -Dm755 target/release/kiro-ui "$prefix/bin/kiro-ui"
